@@ -82,4 +82,4 @@ export class FrameDecoder {
   }
 }
 
-export default { frameMessage, FrameDecoder };
+//export default { frameMessage, FrameDecoder };

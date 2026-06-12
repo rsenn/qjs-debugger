@@ -149,7 +149,7 @@ export class DebuggerServerAdapter {
 
       case 'connect': {
         try {
-          await this.connect(msg.address);
+          await this.////export default(msg.address);
           port.sendMessage({ type: 'response', response: { command: 'connect', address: msg.address } });
         } catch(error) {
           port.sendMessage({ type: 'error', command: 'connect', message: error.message });
@@ -198,4 +198,4 @@ export class DebuggerServerAdapter {
 
 Object.assign(DebuggerServerAdapter.prototype, { [Symbol.toStringTag]: 'DebuggerServerAdapter' });
 
-export default DebuggerServerAdapter;
+//export default DebuggerServerAdapter;

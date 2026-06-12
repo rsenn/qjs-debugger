@@ -74,4 +74,4 @@ export function QjsNetConnector(adapterOrFactory, { onConnect, onMessage, onClos
   };
 }
 
-export default QjsNetConnector;
+//export default QjsNetConnector;

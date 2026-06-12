@@ -112,4 +112,4 @@ export class DebuggerClient extends DebugSession {
 
 Object.assign(DebuggerClient.prototype, { [Symbol.toStringTag]: 'DebuggerClient' });
 
-export default DebuggerClient;
+//export default DebuggerClient;
