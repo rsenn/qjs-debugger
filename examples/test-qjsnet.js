@@ -1,7 +1,7 @@
 import { createServer } from 'net';
-import { DebuggerServerAdapter } from './server-adapter.js';
-import { QjsNetConnector } from './connector-qjsnet.js';
-import { EngineConnection, StartEngine } from './engine-connection.js';
+import { DebuggerServerAdapter } from '../server-adapter.js';
+import { QjsNetConnector } from '../connector-qjsnet.js';
+import { EngineConnection, StartEngine } from '../engine-connection.js';
 
 function main(...args) {
   const adapter = (globalThis.adapter = new DebuggerServerAdapter({ launch: StartEngine, connect: EngineConnection.connect }));
