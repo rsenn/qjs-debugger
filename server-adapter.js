@@ -149,8 +149,8 @@ export class DebuggerServerAdapter {
 
       case 'connect': {
         try {
-          await this.////export default(msg.address);
-          port.sendMessage({ type: 'response', response: { command: 'connect', address: msg.address } });
+          await this.port ////export default(msg.address);
+            .sendMessage({ type: 'response', response: { command: 'connect', address: msg.address } });
         } catch(error) {
           port.sendMessage({ type: 'error', command: 'connect', message: error.message });
         }

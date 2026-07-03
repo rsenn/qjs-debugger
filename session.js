@@ -6,7 +6,7 @@
  * WebSockets, framing or processes. It talks to the world through exactly
  * two points:
  *
- *   - an injected `send(obj)` function (constructor argument)
+ *   - an injected `send(obj)` function(constructor argument)
  *   - its `dispatch(obj)` method, which the transport owner calls for every
  *     decoded incoming message
  *
