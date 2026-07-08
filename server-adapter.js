@@ -54,7 +54,9 @@ export class DebuggerServerAdapter {
     this.detachEngine();
     this.#engine = connection;
 
-    this.session = new DebugSession(msg => connection.sendMessage(msg), { timeout: this.timeout });
+    this.session = new DebugSession(msg => connection.sendMessage(msg), {
+      timeout: this.timeout,
+    });
 
     connection.onmessage = msg => {
       this.session.dispatch(msg);
@@ -87,8 +89,14 @@ export class DebuggerServerAdapter {
 
   /** Spawn an interpreter and connect to its debug port. */
   async launch(args, address = '127.0.0.1:9901', options = {}) {
-    if(!this.launchFn) throw new Error('DebuggerServerAdapter: no launch function injected (pass { launch: StartEngine })');
-    const { child } = this.launchFn(args, address, { listen: true, ...options });
+    if(!this.launchFn)
+      throw new Error(
+        'DebuggerServerAdapter: no launch function injected (pass { launch: StartEngine })',
+      );
+    const { child } = this.launchFn(args, address, {
+      listen: true,
+      ...options,
+    });
     this.child = child;
     await this.connect(address, options);
     return { child, address, args };
@@ -96,7 +104,10 @@ export class DebuggerServerAdapter {
 
   /** Connect to an already-listening engine. */
   async connect(address, options = {}) {
-    if(!this.connectFn) throw new Error('DebuggerServerAdapter: no connect function injected (pass { connect: EngineConnection.connect })');
+    if(!this.connectFn)
+      throw new Error(
+        'DebuggerServerAdapter: no connect function injected (pass { connect: EngineConnection.connect })',
+      );
     const connection = await this.connectFn(address, options);
     this.attachEngine(connection);
     this.onstatus(`connected to engine at ${address}`);
@@ -139,10 +150,19 @@ export class DebuggerServerAdapter {
       case 'start': {
         const { args = [], address, connect = false } = msg;
         try {
-          const info = connect ? { address, args, session: await this.connect(address) } : await this.launch(args, address);
-          port.sendMessage({ type: 'response', response: { command: 'start', args, address: info.address } });
+          const info = connect
+            ? { address, args, session: await this.connect(address) }
+            : await this.launch(args, address);
+          port.sendMessage({
+            type: 'response',
+            response: { command: 'start', args, address: info.address },
+          });
         } catch(error) {
-          port.sendMessage({ type: 'error', command: 'start', message: error.message });
+          port.sendMessage({
+            type: 'error',
+            command: 'start',
+            message: error.message,
+          });
         }
         break;
       }
@@ -150,9 +170,16 @@ export class DebuggerServerAdapter {
       case 'connect': {
         try {
           await this.port ////export default(msg.address);
-            .sendMessage({ type: 'response', response: { command: 'connect', address: msg.address } });
+            .sendMessage({
+              type: 'response',
+              response: { command: 'connect', address: msg.address },
+            });
         } catch(error) {
-          port.sendMessage({ type: 'error', command: 'connect', message: error.message });
+          port.sendMessage({
+            type: 'error',
+            command: 'connect',
+            message: error.message,
+          });
         }
         break;
       }
@@ -162,7 +189,12 @@ export class DebuggerServerAdapter {
         const { request_seq: clientSeq, command, args } = msg.request;
 
         if(!this.session) {
-          port.sendMessage({ type: 'response', request_seq: clientSeq, success: false, error: 'no engine attached' });
+          port.sendMessage({
+            type: 'response',
+            request_seq: clientSeq,
+            success: false,
+            error: 'no engine attached',
+          });
           break;
         }
 
@@ -170,7 +202,12 @@ export class DebuggerServerAdapter {
           const response = await this.session.request(command, args);
           port.sendMessage({ ...response, request_seq: clientSeq });
         } catch(error) {
-          port.sendMessage({ type: 'response', request_seq: clientSeq, success: false, error: error.message });
+          port.sendMessage({
+            type: 'response',
+            request_seq: clientSeq,
+            success: false,
+            error: error.message,
+          });
         }
         break;
       }
@@ -180,11 +217,19 @@ export class DebuggerServerAdapter {
       case 'stopOnException':
       case 'continue':
         if(this.session) this.session.sendMessage(msg);
-        else port.sendMessage({ type: 'error', command: msg.type, message: 'no engine attached' });
+        else
+          port.sendMessage({
+            type: 'error',
+            command: msg.type,
+            message: 'no engine attached',
+          });
         break;
 
       default:
-        port.sendMessage({ type: 'error', message: `unknown message type '${msg.type ?? msg.command}'` });
+        port.sendMessage({
+          type: 'error',
+          message: `unknown message type '${msg.type ?? msg.command}'`,
+        });
         break;
     }
   }
@@ -196,6 +241,8 @@ export class DebuggerServerAdapter {
   }
 }
 
-Object.assign(DebuggerServerAdapter.prototype, { [Symbol.toStringTag]: 'DebuggerServerAdapter' });
+Object.assign(DebuggerServerAdapter.prototype, {
+  [Symbol.toStringTag]: 'DebuggerServerAdapter',
+});
 
 //export default DebuggerServerAdapter;

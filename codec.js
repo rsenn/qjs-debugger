@@ -53,7 +53,10 @@ export class FrameDecoder {
         for(let i = 0; i < 8; i++) {
           const c = this.#buf[i];
           const d = c >= 0x61 ? c - 0x57 : c >= 0x41 ? c - 0x37 : c - 0x30;
-          if(d < 0 || d > 15) throw new Error(`FrameDecoder: bad header byte 0x${c.toString(16)} at offset ${i}`);
+          if(d < 0 || d > 15)
+            throw new Error(
+              `FrameDecoder: bad header byte 0x${c.toString(16)} at offset ${i}`,
+            );
           len = len * 16 + d;
         }
 

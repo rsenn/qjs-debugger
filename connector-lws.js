@@ -32,9 +32,15 @@ const DEFAULT_REASONS = {
   RECEIVE: 6,
 };
 
-export function LWSConnector(adapterOrFactory, { name = 'debugger', reasons = DEFAULT_REASONS, isFinal } = {}) {
+export function LWSConnector(
+  adapterOrFactory,
+  { name = 'debugger', reasons = DEFAULT_REASONS, isFinal } = {},
+) {
   const ports = new Map(); /* wsi -> { port, adapter, detach, partial } */
-  const adapterFor = typeof adapterOrFactory == 'function' ? adapterOrFactory : () => adapterOrFactory;
+  const adapterFor =
+    typeof adapterOrFactory == 'function'
+      ? adapterOrFactory
+      : () => adapterOrFactory;
 
   function handleText(entry, text) {
     /* reassemble fragmented frames: accumulate until JSON parses */
@@ -47,13 +53,20 @@ export function LWSConnector(adapterOrFactory, { name = 'debugger', reasons = DE
       entry.partial = data;
       if(entry.partial.length > 1 << 22) {
         entry.partial = '';
-        entry.port.sendMessage({ type: 'error', message: 'oversized/unparseable message dropped' });
+        entry.port.sendMessage({
+          type: 'error',
+          message: 'oversized/unparseable message dropped',
+        });
       }
       return;
     }
 
     entry.partial = '';
-    entry.adapter.clientMessage(entry.port, msg).catch(error => entry.port.sendMessage({ type: 'error', message: error.message }));
+    entry.adapter
+      .clientMessage(entry.port, msg)
+      .catch(error =>
+        entry.port.sendMessage({ type: 'error', message: error.message }),
+      );
   }
 
   return {
@@ -69,7 +82,12 @@ export function LWSConnector(adapterOrFactory, { name = 'debugger', reasons = DE
             close: () => wsi.close?.(),
           };
 
-          ports.set(wsi, { port, adapter, detach: adapter.attachClient(port), partial: '' });
+          ports.set(wsi, {
+            port,
+            adapter,
+            detach: adapter.attachClient(port),
+            partial: '',
+          });
           break;
         }
 
@@ -77,7 +95,8 @@ export function LWSConnector(adapterOrFactory, { name = 'debugger', reasons = DE
           const entry = ports.get(wsi);
           if(!entry) break;
 
-          const text = typeof buf == 'string' ? buf : new TextDecoder().decode(buf);
+          const text =
+            typeof buf == 'string' ? buf : new TextDecoder().decode(buf);
 
           if(typeof isFinal == 'function' && !isFinal(wsi)) {
             entry.partial += text;

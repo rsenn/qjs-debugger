@@ -33,12 +33,20 @@ export class DebuggerClient extends DebugSession {
     this.#transport = transport;
 
     const onMessage = data => {
-      const text = typeof data == 'string' ? data : (data?.data ?? data); /* Event.data vs raw */
+      const text =
+        typeof data == 'string'
+          ? data
+          : (data?.data ?? data); /* Event.data vs raw */
       let msg;
       try {
-        msg = JSON.parse(typeof text == 'string' ? text : new TextDecoder().decode(text));
+        msg = JSON.parse(
+          typeof text == 'string' ? text : new TextDecoder().decode(text),
+        );
       } catch(e) {
-        this.emit('protocol-error', new Error(`bad JSON from server: ${e.message}`));
+        this.emit(
+          'protocol-error',
+          new Error(`bad JSON from server: ${e.message}`),
+        );
         return;
       }
       this.dispatch(msg);
@@ -87,15 +95,26 @@ export class DebuggerClient extends DebugSession {
    *     import { WebSocketClient } from './lib/async/websocket.js';
    *     const client = await DebuggerClient.connect(url, { WebSocket: WebSocketClient });
    */
-  static connect(url, { WebSocket: WS = globalThis.WebSocket, ...options } = {}) {
-    if(!WS) throw new Error('DebuggerClient.connect: no WebSocket implementation (pass options.WebSocket)');
+  static connect(
+    url,
+    { WebSocket: WS = globalThis.WebSocket, ...options } = {},
+  ) {
+    if(!WS)
+      throw new Error(
+        'DebuggerClient.connect: no WebSocket implementation (pass options.WebSocket)',
+      );
 
     return new Promise((resolve, reject) => {
       const ws = new WS(url);
       const client = new DebuggerClient(ws, options);
 
       const onOpen = () => resolve(client);
-      const onFail = err => reject(err instanceof Error ? err : new Error(`DebuggerClient: connect to ${url} failed`));
+      const onFail = err =>
+        reject(
+          err instanceof Error
+            ? err
+            : new Error(`DebuggerClient: connect to ${url} failed`),
+        );
 
       if(typeof ws.addEventListener == 'function') {
         ws.addEventListener('open', onOpen);
@@ -110,6 +129,8 @@ export class DebuggerClient extends DebugSession {
   }
 }
 
-Object.assign(DebuggerClient.prototype, { [Symbol.toStringTag]: 'DebuggerClient' });
+Object.assign(DebuggerClient.prototype, {
+  [Symbol.toStringTag]: 'DebuggerClient',
+});
 
 //export default DebuggerClient;

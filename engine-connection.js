@@ -14,7 +14,7 @@
  */
 
 import { spawn } from 'child_process';
-import { AF_INET, AsyncSocket, IPPROTO_TCP, SOCK_STREAM, SockAddr } from 'sockets';
+import { AF_INET, AsyncSocket, IPPROTO_TCP, SOCK_STREAM, SockAddr, } from 'sockets';
 import { TextDecoder, TextEncoder } from 'textcode';
 import { FrameDecoder, frameMessage } from './codec.js';
 import { DebugSession } from './session.js';
@@ -63,7 +63,10 @@ export class EngineConnection {
       }
 
       sock.close();
-      if(attempt >= retries) throw new Error(`EngineConnection: cannot connect to ${address} after ${attempt + 1} attempts`);
+      if(attempt >= retries)
+        throw new Error(
+          `EngineConnection: cannot connect to ${address} after ${attempt + 1} attempts`,
+        );
       await new Promise(resolve => globalThis.setTimeout(resolve, delay));
     }
   }
@@ -107,7 +110,10 @@ export class EngineConnection {
     const session = new DebugSession(msg => this.sendMessage(msg), options);
     this.onmessage = msg => session.dispatch(msg);
     const prevClose = this.onclose;
-    this.onclose = () => (session.abort('engine connection closed'), prevClose?.());
+    this.onclose = () => (
+      session.abort('engine connection closed'),
+      prevClose?.()
+    );
     return session;
   }
 }
@@ -120,11 +126,24 @@ export class EngineConnection {
  * The spawn function is injectable for environments where 'child_process'
  * spawn signatures differ — pass options.spawn(file, args, opts).
  */
-export function StartEngine(args, address = '127.0.0.1:9901', { listen = true, interpreter = 'qjsm', env = {}, spawn: doSpawn = spawn } = {}) {
+export function StartEngine(
+  args,
+  address = '127.0.0.1:9901',
+  {
+    listen = true,
+    interpreter = 'qjsm',
+    env = {},
+    spawn: doSpawn = spawn,
+  } = {},
+) {
   const childEnv = { ...env };
-  childEnv[listen ? 'QUICKJS_DEBUG_LISTEN_ADDRESS' : 'QUICKJS_DEBUG_ADDRESS'] = address;
+  childEnv[listen ? 'QUICKJS_DEBUG_LISTEN_ADDRESS' : 'QUICKJS_DEBUG_ADDRESS'] =
+    address;
 
-  const child = doSpawn(interpreter, args, { env: childEnv, stdio: ['inherit', 'pipe', 'pipe'] });
+  const child = doSpawn(interpreter, args, {
+    env: childEnv,
+    stdio: ['inherit', 'pipe', 'pipe'],
+  });
   return { child, address, args };
 }
 
