@@ -21,15 +21,9 @@
  * (one debuggee per browser tab).
  */
 
-export function QjsNetConnector(
-  adapterOrFactory,
-  { onConnect, onMessage, onClose, onError } = {},
-) {
+export function QjsNetConnector(adapterOrFactory, { onConnect, onMessage, onClose, onError } = {}) {
   const ports = new WeakMap(); /* ws -> { port, adapter, detach } */
-  const adapterFor =
-    typeof adapterOrFactory == 'function'
-      ? adapterOrFactory
-      : () => adapterOrFactory;
+  const adapterFor = typeof adapterOrFactory == 'function' ? adapterOrFactory : () => adapterOrFactory;
 
   return {
     onConnect(ws, req) {
@@ -59,11 +53,7 @@ export function QjsNetConnector(
         return;
       }
 
-      entry.adapter
-        .clientMessage(entry.port, msg)
-        .catch(error =>
-          entry.port.sendMessage({ type: 'error', message: error.message }),
-        );
+      entry.adapter.clientMessage(entry.port, msg).catch(error => entry.port.sendMessage({ type: 'error', message: error.message }));
       onMessage?.(ws, data, msg);
     },
 

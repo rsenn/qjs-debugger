@@ -14,7 +14,8 @@
  */
 
 import { spawn } from 'child_process';
-import { AF_INET, AsyncSocket, IPPROTO_TCP, SOCK_STREAM, SockAddr, } from 'sockets';
+import { setTimeout } from 'os';
+import { AF_INET, AsyncSocket, IPPROTO_TCP, SOCK_STREAM, SockAddr } from 'sockets';
 import { TextDecoder, TextEncoder } from 'textcode';
 import { FrameDecoder, frameMessage } from './codec.js';
 import { DebugSession } from './session.js';
@@ -51,24 +52,60 @@ export class EngineConnection {
     const [host, port] = address.split(':');
     const addr = new SockAddr(AF_INET, host, +port);
 
-    /* the engine needs a moment after spawn before it listens; retry */
+    /* the engine needs a moment after spawn before it listens; retry.
+       AsyncSocket.connect() resolves with undefined on success and
+       rejects (SyscallError) on failure, e.g. ECONNREFUSED. */
     for(let attempt = 0; ; attempt++) {
       const sock = new AsyncSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-      const ret = await sock.connect(addr);
+      let ret;
 
-      if(ret >= 0) {
+      try {
+        ret = await sock.connect(addr);
+      } catch(e) {
+        ret = -1;
+      }
+
+      if(ret === undefined || ret >= 0) {
         conn.#sock = sock;
         conn.#readLoop();
         return conn;
       }
 
       sock.close();
-      if(attempt >= retries)
-        throw new Error(
-          `EngineConnection: cannot connect to ${address} after ${attempt + 1} attempts`,
-        );
-      await new Promise(resolve => globalThis.setTimeout(resolve, delay));
+      if(attempt >= retries) throw new Error(`EngineConnection: cannot connect to ${address} after ${attempt + 1} attempts`);
+      await new Promise(resolve => setTimeout(resolve, delay));
     }
+  }
+
+  static async accept(address) {
+    const conn = new EngineConnection();
+    const [host, port] = address.split(':');
+    const addr = new SockAddr(AF_INET, host, +port);
+    const remote = new SockAddr(AF_INET);
+
+    const sock = new AsyncSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+
+    sock.bind(addr);
+    sock.listen(5);
+    let ret;
+
+    try {
+      ret = await sock.accept(remote);
+    } catch(e) {
+      ret = -1;
+    }
+    console.log('accepted', ret);
+
+  sock.close();
+
+    if(ret != -1) {
+      conn.#sock = ret;
+      conn.#readLoop();
+      return conn;
+    }
+
+    sock.close();
+    throw new Error(`EngineConnection: cannot accept at ${address}`);
   }
 
   async #readLoop() {
@@ -110,10 +147,7 @@ export class EngineConnection {
     const session = new DebugSession(msg => this.sendMessage(msg), options);
     this.onmessage = msg => session.dispatch(msg);
     const prevClose = this.onclose;
-    this.onclose = () => (
-      session.abort('engine connection closed'),
-      prevClose?.()
-    );
+    this.onclose = () => (session.abort('engine connection closed'), prevClose?.());
     return session;
   }
 }
@@ -126,19 +160,9 @@ export class EngineConnection {
  * The spawn function is injectable for environments where 'child_process'
  * spawn signatures differ — pass options.spawn(file, args, opts).
  */
-export function StartEngine(
-  args,
-  address = '127.0.0.1:9901',
-  {
-    listen = true,
-    interpreter = 'qjsm',
-    env = {},
-    spawn: doSpawn = spawn,
-  } = {},
-) {
+export function StartEngine(args, address = '127.0.0.1:9901', { listen = true, interpreter = 'qjsm', env = {}, spawn: doSpawn = spawn } = {}) {
   const childEnv = { ...env };
-  childEnv[listen ? 'QUICKJS_DEBUG_LISTEN_ADDRESS' : 'QUICKJS_DEBUG_ADDRESS'] =
-    address;
+  childEnv[listen ? 'QUICKJS_DEBUG_LISTEN_ADDRESS' : 'QUICKJS_DEBUG_ADDRESS'] = address;
 
   const child = doSpawn(interpreter, args, {
     env: childEnv,
@@ -149,9 +173,16 @@ export function StartEngine(
 
 /** One-call helper: spawn engine + connect + attach a session. */
 export async function LaunchEngineSession(args, address, options = {}) {
+  if(options.listen !== false) {
+    const engine = StartEngine(args, address, options);
+    const connection = await EngineConnection.connect(engine.address, options);
+    const session = connection.attachSession(options);
+    return { ...engine, connection, session };
+  }
+
+  const connection = EngineConnection.accept(address);
   const engine = StartEngine(args, address, options);
-  const connection = await EngineConnection.connect(engine.address, options);
-  const session = connection.attachSession(options);
+  const session = (await connection).attachSession(options);
   return { ...engine, connection, session };
 }
 

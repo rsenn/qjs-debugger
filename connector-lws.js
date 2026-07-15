@@ -32,15 +32,9 @@ const DEFAULT_REASONS = {
   RECEIVE: 6,
 };
 
-export function LWSConnector(
-  adapterOrFactory,
-  { name = 'debugger', reasons = DEFAULT_REASONS, isFinal } = {},
-) {
+export function LWSConnector(adapterOrFactory, { name = 'debugger', reasons = DEFAULT_REASONS, isFinal } = {}) {
   const ports = new Map(); /* wsi -> { port, adapter, detach, partial } */
-  const adapterFor =
-    typeof adapterOrFactory == 'function'
-      ? adapterOrFactory
-      : () => adapterOrFactory;
+  const adapterFor = typeof adapterOrFactory == 'function' ? adapterOrFactory : () => adapterOrFactory;
 
   function handleText(entry, text) {
     /* reassemble fragmented frames: accumulate until JSON parses */
@@ -62,11 +56,7 @@ export function LWSConnector(
     }
 
     entry.partial = '';
-    entry.adapter
-      .clientMessage(entry.port, msg)
-      .catch(error =>
-        entry.port.sendMessage({ type: 'error', message: error.message }),
-      );
+    entry.adapter.clientMessage(entry.port, msg).catch(error => entry.port.sendMessage({ type: 'error', message: error.message }));
   }
 
   return {
@@ -95,8 +85,7 @@ export function LWSConnector(
           const entry = ports.get(wsi);
           if(!entry) break;
 
-          const text =
-            typeof buf == 'string' ? buf : new TextDecoder().decode(buf);
+          const text = typeof buf == 'string' ? buf : new TextDecoder().decode(buf);
 
           if(typeof isFinal == 'function' && !isFinal(wsi)) {
             entry.partial += text;

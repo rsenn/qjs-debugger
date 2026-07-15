@@ -89,10 +89,7 @@ export class DebuggerServerAdapter {
 
   /** Spawn an interpreter and connect to its debug port. */
   async launch(args, address = '127.0.0.1:9901', options = {}) {
-    if(!this.launchFn)
-      throw new Error(
-        'DebuggerServerAdapter: no launch function injected (pass { launch: StartEngine })',
-      );
+    if(!this.launchFn) throw new Error('DebuggerServerAdapter: no launch function injected (pass { launch: StartEngine })');
     const { child } = this.launchFn(args, address, {
       listen: true,
       ...options,
@@ -104,10 +101,7 @@ export class DebuggerServerAdapter {
 
   /** Connect to an already-listening engine. */
   async connect(address, options = {}) {
-    if(!this.connectFn)
-      throw new Error(
-        'DebuggerServerAdapter: no connect function injected (pass { connect: EngineConnection.connect })',
-      );
+    if(!this.connectFn) throw new Error('DebuggerServerAdapter: no connect function injected (pass { connect: EngineConnection.connect })');
     const connection = await this.connectFn(address, options);
     this.attachEngine(connection);
     this.onstatus(`connected to engine at ${address}`);
@@ -150,9 +144,7 @@ export class DebuggerServerAdapter {
       case 'start': {
         const { args = [], address, connect = false } = msg;
         try {
-          const info = connect
-            ? { address, args, session: await this.connect(address) }
-            : await this.launch(args, address);
+          const info = connect ? { address, args, session: await this.connect(address) } : await this.launch(args, address);
           port.sendMessage({
             type: 'response',
             response: { command: 'start', args, address: info.address },

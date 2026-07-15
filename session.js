@@ -32,8 +32,7 @@ export class DebugSession {
    * @param options  { timeout }
    */
   constructor(send, options = {}) {
-    if(typeof send != 'function')
-      throw new TypeError('DebugSession: send function required');
+    if(typeof send != 'function') throw new TypeError('DebugSession: send function required');
     this.#send = send;
     if(options.timeout !== undefined) this.timeout = options.timeout;
   }
@@ -101,12 +100,7 @@ export class DebugSession {
         this.#pending.delete(msg.request_seq);
         if(pending.tid !== undefined) globalThis.clearTimeout?.(pending.tid);
 
-        if(msg.success === false)
-          pending.reject(
-            new Error(
-              `request '${pending.command}' (seq #${msg.request_seq}) failed: ${msg.error}`,
-            ),
-          );
+        if(msg.success === false) pending.reject(new Error(`request '${pending.command}' (seq #${msg.request_seq}) failed: ${msg.error}`));
         else pending.resolve(msg);
         break;
       }
@@ -114,9 +108,7 @@ export class DebugSession {
       case 'event': {
         const { event } = msg;
         const i = event.type.indexOf('Event');
-        const name = (
-          i >= 0 ? event.type.slice(0, i) : event.type
-        ).toLowerCase();
+        const name = (i >= 0 ? event.type.slice(0, i) : event.type).toLowerCase();
         this.emit('event', event);
         this.emit(name, event);
         break;
@@ -136,11 +128,7 @@ export class DebugSession {
   abort(reason = 'connection closed') {
     for(let [seq, pending] of this.#pending) {
       if(pending.tid !== undefined) globalThis.clearTimeout?.(pending.tid);
-      pending.reject(
-        new Error(
-          `request '${pending.command}' (seq #${seq}) aborted: ${reason}`,
-        ),
-      );
+      pending.reject(new Error(`request '${pending.command}' (seq #${seq}) aborted: ${reason}`));
     }
     this.#pending.clear();
     this.emit('aborted', reason);
@@ -166,11 +154,7 @@ export class DebugSession {
       if(timeout > 0 && typeof globalThis.setTimeout == 'function')
         pending.tid = globalThis.setTimeout(() => {
           this.#pending.delete(request_seq);
-          reject(
-            new Error(
-              `request '${command}' (seq #${request_seq}) timed out after ${timeout}ms`,
-            ),
-          );
+          reject(new Error(`request '${command}' (seq #${request_seq}) timed out after ${timeout}ms`));
         }, timeout);
 
       this.#pending.set(request_seq, pending);
@@ -195,9 +179,7 @@ export class DebugSession {
       const [frame, scope] = ref;
       ref = (frame << 2) + scope;
     }
-    return (
-      await this.request('variables', { variablesReference: ref, ...options })
-    ).body;
+    return (await this.request('variables', { variablesReference: ref, ...options })).body;
   }
 
   async evaluate(expression, frameId = 0) {
@@ -225,10 +207,7 @@ export class DebugSession {
       return reply;
     }
 
-    if(Array.isArray(breakpoints))
-      breakpoints = breakpoints.map(b =>
-        typeof b == 'number' ? { line: b } : b,
-      );
+    if(Array.isArray(breakpoints)) breakpoints = breakpoints.map(b => (typeof b == 'number' ? { line: b } : b));
 
     this.sendMessage({
       type: 'breakpoints',
