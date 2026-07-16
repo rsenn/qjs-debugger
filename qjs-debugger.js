@@ -98,6 +98,9 @@ export class Debugger {
   programArgs = [];
   breakpoints = []; /* { num, file, line, spec } */
   nextBpNum = 1;
+  displays = []; /* { num, expr } — printed at every stop */
+  nextDisplayNum = 1;
+  identifiers = []; /* debuggee identifiers, refreshed at every stop (for completion) */
   valueCounter = 0;
   stopOnException = false;
 
@@ -170,8 +173,10 @@ export class Debugger {
     up: ['cmdUp', 'up [N] -- select caller frame', true],
     down: ['cmdDown', 'down [N] -- select callee frame', true],
     print: ['cmdPrint', 'print EXPR -- evaluate expression in selected frame (p)', false],
+    display: ['cmdDisplay', 'display [EXPR] -- print EXPR at every stop; alone: print all displays', false],
+    undisplay: ['cmdUndisplay', 'undisplay [NUM...] -- remove auto-display expressions', false],
     list: ['cmdList', 'list [LOCATION] -- show source (l)', true],
-    info: ['cmdInfo', 'info breakpoints|locals|frame|stack', false],
+    info: ['cmdInfo', 'info breakpoints|locals|frame|stack|display', false],
     set: ['cmdSet', 'set args ARG... -- set program arguments', false],
     interrupt: ['cmdInterrupt', 'interrupt -- pause the running program', false],
     kill: ['cmdKill', 'kill -- kill the debugged program', false],
@@ -187,6 +192,53 @@ export class Debugger {
     if(matches.length == 1) return matches[0];
     if(matches.length > 1) throw new Error(`Ambiguous command "${word}": ${matches.join(', ')}.`);
     return null;
+  }
+
+  /**
+   * Tab completion (REPL getCompletions contract: { tab, pos, ctx }).
+   * print/display: debuggee identifiers (cached at every stop);
+   * break: source file names and function names.
+   */
+  getCompletions(line, cursorPos) {
+    const empty = { tab: [], pos: 0, ctx: {} };
+    const before = line.slice(0, cursorPos);
+    const m = before.match(/^\s*(\S+)\s+(.*)$/s);
+    if(!m) return empty;
+
+    const [, word, rest] = m;
+    let name = null;
+    try {
+      name = this.resolveCommand(word);
+    } catch(e) {}
+
+    if(name == 'print' || name == 'display') {
+      const im = rest.match(/([A-Za-z_$][\w$]*)$/);
+      if(!im) return empty;
+      return { tab: this.identifiers.filter(id => id.startsWith(im[1])).sort(), pos: im[1].length, ctx: {} };
+    }
+
+    if(name == 'break') return { tab: this.#locationCandidates().filter(c => c.startsWith(rest)).sort(), pos: rest.length, ctx: {} };
+
+    return empty;
+  }
+
+  #locationCandidates() {
+    const candidates = new Set();
+
+    for(const file of this.#sourceFiles()) {
+      candidates.add(file);
+
+      let text;
+      try {
+        text = readFileSync(file, 'utf-8');
+      } catch(e) {
+        continue;
+      }
+
+      for(const { key } of ScanFunctions(text)) candidates.add(key);
+    }
+
+    return [...candidates];
   }
 
   async execute(line) {
@@ -279,6 +331,7 @@ export class Debugger {
     this.child = this.connection = this.session = null;
     this.stack = [];
     this.currentFrame = 0;
+    this.identifiers = [];
   }
 
   /** Send a resuming request and wait for the next stop (or program exit). */
@@ -316,18 +369,41 @@ export class Debugger {
     if(/^step/i.test(ev.reason ?? '')) {
       /* stepping: gdb prints just the new source line */
       if(!this.#printSourceLine(f.filename, f.line)) this.#printFrame(f);
+    } else {
+      let prefix = '';
+      if(ev.reason == 'breakpoint') {
+        const bp = this.breakpoints.find(b => b.file == f.filename && b.line == f.line);
+        if(bp) prefix = `Breakpoint ${bp.num}, `;
+      } else if(ev.reason == 'exception') prefix = 'Stopped on exception, ';
+      else if(ev.reason == 'pause') prefix = 'Program interrupted, ';
+
+      this.print(`${prefix}${f.name ?? '??'} () at ${f.filename ?? '??'}:${f.line ?? '?'}`);
+      this.#printSourceLine(f.filename, f.line);
+    }
+
+    await this.#showDisplays();
+
+    /* fill the completion cache in the background; the prompt need not wait */
+    this.#refreshIdentifiers().catch(() => {});
+  }
+
+  async #refreshIdentifiers() {
+    if(!this.session || !this.stack.length) {
+      this.identifiers = [];
       return;
     }
 
-    let prefix = '';
-    if(ev.reason == 'breakpoint') {
-      const bp = this.breakpoints.find(b => b.file == f.filename && b.line == f.line);
-      if(bp) prefix = `Breakpoint ${bp.num}, `;
-    } else if(ev.reason == 'exception') prefix = 'Stopped on exception, ';
-    else if(ev.reason == 'pause') prefix = 'Program interrupted, ';
+    const frame = this.stack[this.currentFrame]?.id ?? 0;
+    const names = new Set();
 
-    this.print(`${prefix}${f.name ?? '??'} () at ${f.filename ?? '??'}:${f.line ?? '?'}`);
-    this.#printSourceLine(f.filename, f.line);
+    for(const scope of [1, 2, 0] /* local, closure, global */) {
+      try {
+        const vars = await this.session.variables([frame, scope]);
+        for(const v of vars ?? []) if(/^[A-Za-z_$][\w$]*$/.test(v.name)) names.add(v.name);
+      } catch(e) {}
+    }
+
+    this.identifiers = [...names];
   }
 
   interrupt() {
@@ -553,6 +629,12 @@ export class Debugger {
     this.#printSourceLine(f.filename, f.line);
   }
 
+  async #evalExpression(expr) {
+    const frame = this.stack[this.currentFrame]?.id ?? 0;
+    const body = await this.session.evaluate(expr, frame);
+    return body?.result ?? body?.value ?? inspect(body, { colors: false });
+  }
+
   async cmdPrint(arg) {
     if(!arg) {
       this.print('Argument required (expression to print).');
@@ -560,10 +642,44 @@ export class Debugger {
     }
     if(!this.#requireStopped()) return;
 
-    const frame = this.stack[this.currentFrame]?.id ?? 0;
-    const body = await this.session.evaluate(arg, frame);
-    const value = body?.result ?? body?.value ?? inspect(body, { colors: false });
-    this.print(`$${++this.valueCounter} = ${value}`);
+    this.print(`$${++this.valueCounter} = ${await this.#evalExpression(arg)}`);
+  }
+
+  async cmdDisplay(arg) {
+    if(!arg) {
+      /* bare `display`: print the values of all displays now */
+      if(!this.#requireStopped()) return;
+      await this.#showDisplays();
+      return;
+    }
+
+    const d = { num: this.nextDisplayNum++, expr: arg };
+    this.displays.push(d);
+    if(this.session && this.stack.length) await this.#showDisplay(d);
+  }
+
+  cmdUndisplay(arg) {
+    if(!arg) {
+      this.displays = [];
+      return;
+    }
+
+    const nums = arg.split(/[\s,]+/).map(Number);
+    this.displays = this.displays.filter(d => !nums.includes(d.num));
+  }
+
+  async #showDisplay(d) {
+    let value;
+    try {
+      value = await this.#evalExpression(d.expr);
+    } catch(e) {
+      value = `<error: ${e.message}>`;
+    }
+    this.print(`${d.num}: ${d.expr} = ${value}`);
+  }
+
+  async #showDisplays() {
+    for(const d of this.displays) await this.#showDisplay(d);
   }
 
   cmdList(arg) {
@@ -616,8 +732,15 @@ export class Debugger {
       this.cmdFrame('');
     } else if('args'.startsWith(what) && what) {
       this.print(`Argument list to give program when started is "${this.programArgs.join(' ')}".`);
+    } else if('display'.startsWith(what) && what) {
+      if(!this.displays.length) {
+        this.print('There are no auto-display expressions now.');
+        return;
+      }
+      this.print('Num Expression');
+      for(const d of this.displays) this.print(`${String(d.num).padEnd(4)}${d.expr}`);
     } else {
-      this.print('Usage: info breakpoints|locals|stack|frame|args');
+      this.print('Usage: info breakpoints|locals|stack|frame|args|display');
     }
   }
 
@@ -801,6 +924,13 @@ function StartREPL(dbg) {
     else runLine(expr.trim());
 
     return true;
+  };
+
+  /* tab completion: debugger commands get debugger candidates, '\' directives
+     keep the REPL's JS completion */
+  repl.getCompletions = function(line, pos) {
+    if(line.startsWith('\\')) return REPL.prototype.getCompletions.call(this, line, pos);
+    return dbg.getCompletions(line, pos);
   };
 
   /* Ctrl-C interrupts the running program instead of the debugger */
