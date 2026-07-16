@@ -15,7 +15,7 @@
 
 import { spawn } from 'child_process';
 import { setTimeout } from 'os';
-import { AF_INET, AsyncSocket, IPPROTO_TCP, SOCK_STREAM, SockAddr } from 'sockets';
+import { AF_INET, AsyncSocket, IPPROTO_TCP, SOCK_STREAM, SockAddr, SOL_SOCKET, SO_REUSEADDR, SO_REUSEPORT } from 'sockets';
 import { TextDecoder, TextEncoder } from 'textcode';
 import { FrameDecoder, frameMessage } from './codec.js';
 import { DebugSession } from './session.js';
@@ -85,6 +85,9 @@ export class EngineConnection {
 
     const sock = new AsyncSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 
+    sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, [1]);
+    sock.setsockopt(SOL_SOCKET, SO_REUSEPORT, [1]);
+
     sock.bind(addr);
     sock.listen(5);
     let ret;
@@ -94,9 +97,7 @@ export class EngineConnection {
     } catch(e) {
       ret = -1;
     }
-    console.log('accepted', ret);
-
-  sock.close();
+    sock.close();
 
     if(ret != -1) {
       conn.#sock = ret;
@@ -125,11 +126,21 @@ export class EngineConnection {
     }
   }
 
+  /* AsyncSocket permits only one in-flight send ("Already a pending write");
+     chain sends so back-to-back messages don't throw */
+  #sendq = Promise.resolve();
+
   sendMessage(msg) {
     if(!this.#sock) throw new Error('EngineConnection: not connected');
     const json = typeof msg == 'string' ? msg : JSON.stringify(msg);
     const byteLength = this.#encoder.encode(json).length;
-    return this.#sock.send(frameMessage(json, byteLength));
+    const frame = frameMessage(json, byteLength);
+    const sent = this.#sendq.then(() => {
+      if(!this.#sock) throw new Error('EngineConnection: closed');
+      return this.#sock.send(frame);
+    });
+    this.#sendq = sent.catch(() => {});
+    return sent;
   }
 
   close() {
