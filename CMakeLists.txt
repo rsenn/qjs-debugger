@@ -18,3 +18,6 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink qjs-debugger \$ENV{DE
 
 # support modules imported relative to the script
 install(FILES codec.js session.js engine-connection.js transport.js DESTINATION bin)
+
+# gui mode (loaded dynamically by qjs-debugger -m gui)
+install(FILES gui/main.js gui/theme.js gui/widgets.js DESTINATION bin/gui)

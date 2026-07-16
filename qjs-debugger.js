@@ -1025,8 +1025,16 @@ function main(...args) {
       StartREPL(dbg);
       break;
 
-    case 'server':
     case 'gui':
+      import('./gui/main.js')
+        .then(({ StartGUI }) => StartGUI(dbg))
+        .catch(err => {
+          puts(`${name}: cannot start gui: ${err.message}\n`);
+          exit(1);
+        });
+      break;
+
+    case 'server':
       puts(`${name}: mode '${mode}' is not implemented yet.\n`);
       exit(1);
       break;
