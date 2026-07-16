@@ -22,6 +22,7 @@ import inspect from 'inspect';
 import process from 'process';
 import Console from 'console';
 import { EngineConnection, StartEngine } from './engine-connection.js';
+import { SocketTransport, StreamTransport } from './transport.js';
 
 /* ------------------------------------------------------------------ *
  *  source scanning (simple RegExp, no parser)                         *
@@ -117,9 +118,11 @@ export class Debugger {
   print = (...args) => console.log(...args);
   printRaw = s => (puts(s), stdout.flush());
 
-  constructor({ interpreter = 'qjs', address = '127.0.0.1:9901' } = {}) {
+  constructor({ interpreter = 'qjs', address = '127.0.0.1:9901', listen = true, transport = SocketTransport } = {}) {
     this.interpreter = interpreter;
     this.address = address;
+    this.listen = listen; /* true: we accept, engine connects out; false: engine listens, we connect */
+    this.transport = transport;
   }
 
   setProgram(file, args = []) {
@@ -213,22 +216,29 @@ export class Debugger {
 
     const args = [this.program, ...this.programArgs];
 
-    const connection = EngineConnection.accept(this.address);
+    const spawnEngine = () => {
+      const { child } = StartEngine(args, this.address, {
+        listen: !this.listen,
+        interpreter: this.interpreter,
+        env: process.env,
+      });
+      this.child = child;
 
-    const { child } = StartEngine(args, this.address, {
-      listen: false,
-      interpreter: this.interpreter,
-      env: process.env,
-    });
-    this.child = child;
-
-    forwardOutput(child.stdout, this.printRaw);
-    forwardOutput(child.stderr, this.printRaw);
+      forwardOutput(child.stdout, this.printRaw);
+      forwardOutput(child.stderr, this.printRaw);
+    };
 
     try {
-      this.connection = await connection;
+      if(this.listen) {
+        /* the engine connects out without retrying: spawn it only once
+           the transport reports the listener is bound */
+        this.connection = await EngineConnection.accept(this.address, { transport: this.transport, listening: spawnEngine });
+      } else {
+        spawnEngine();
+        this.connection = await EngineConnection.connect(this.address, { transport: this.transport });
+      }
     } catch(err) {
-      child.kill?.();
+      this.child?.kill?.();
       this.child = null;
       throw err;
     }
@@ -820,6 +830,9 @@ function Usage(name) {
 
   -m, --mode MODE       repl | server | gui  (default: repl)
   -a, --address ADDR    engine debug address (default: 127.0.0.1:9901)
+  -l, --listen          listen on ADDR, engine connects out (default)
+  -c, --connect         engine listens on ADDR, debugger connects
+  -t, --transport NAME  socket (AsyncSocket) | lws (TCPSocketStream)
   -h, --help            show this help
 `);
 }
@@ -837,6 +850,8 @@ function main(...args) {
 
   let mode = 'repl',
     address = '127.0.0.1:9901',
+    listen = true,
+    transport = SocketTransport,
     program = null,
     programArgs = [];
 
@@ -850,7 +865,17 @@ function main(...args) {
       break;
     } else if((m = arg.match(/^(?:-m|--mode)(?:=(.*))?$/))) mode = m[1] ?? args[++i];
     else if((m = arg.match(/^(?:-a|--address)(?:=(.*))?$/))) address = m[1] ?? args[++i];
-    else if(arg == '-h' || arg == '--help') {
+    else if(arg == '-l' || arg == '--listen') listen = true;
+    else if(arg == '-c' || arg == '--connect') listen = false;
+    else if((m = arg.match(/^(?:-t|--transport)(?:=(.*))?$/))) {
+      const name = m[1] ?? args[++i];
+      if(/^(socket|sockets?|async)/i.test(name)) transport = SocketTransport;
+      else if(/^(lws|stream|tcp)/i.test(name)) transport = StreamTransport;
+      else {
+        puts(`${basename(process.argv[1] ?? 'qjs-debugger', '.js')}: unknown transport '${name}' (socket, lws)\n`);
+        exit(1);
+      }
+    } else if(arg == '-h' || arg == '--help') {
       Usage(name);
       exit(0);
     } else if(arg.startsWith('-')) {
@@ -861,7 +886,7 @@ function main(...args) {
     else programArgs.push(arg);
   }
 
-  const dbg = new Debugger({ interpreter, address });
+  const dbg = new Debugger({ interpreter, address, listen, transport });
   if(program !== null) dbg.setProgram(program, programArgs);
 
   switch (mode) {

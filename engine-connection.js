@@ -1,10 +1,11 @@
 /**
- * engine-connection.js — the localhost socket to the QuickJS interpreter.
+ * engine-connection.js — framed protocol messages to/from the QuickJS interpreter.
  *
- * QuickJS-side module (imports 'sockets', 'textcode', 'child_process').
- * Owns exactly one concern: moving framed protocol messages between a TCP
- * socket and JS objects. It does not interpret them — plug a DebugSession
- * (or the server adapter) on top with attachSession()/onmessage.
+ * Transport-agnostic: the byte transport is injected (see transport.js for
+ * the duck type and the two bundled implementations). Owns exactly one
+ * concern: moving framed protocol messages between a transport and JS
+ * objects. It does not interpret them — plug a DebugSession (or the server
+ * adapter) on top with attachSession()/onmessage.
  *
  * Interface exposed upward (duck type "MessagePort"):
  *     sendMessage(obj)        — frame + transmit one message
@@ -14,14 +15,13 @@
  */
 
 import { spawn } from 'child_process';
-import { setTimeout } from 'os';
-import { AF_INET, AsyncSocket, IPPROTO_TCP, SOCK_STREAM, SockAddr, SOL_SOCKET, SO_REUSEADDR, SO_REUSEPORT } from 'sockets';
 import { TextDecoder, TextEncoder } from 'textcode';
 import { FrameDecoder, frameMessage } from './codec.js';
 import { DebugSession } from './session.js';
+import { SocketTransport } from './transport.js';
 
 export class EngineConnection {
-  #sock = null;
+  #transport = null;
   #decoder;
   #encoder = new TextEncoder();
   #closed = false;
@@ -30,7 +30,8 @@ export class EngineConnection {
   onclose = null;
   onerror = err => console.log('EngineConnection error:', err.message);
 
-  constructor() {
+  /** @param transport  a connected transport (see transport.js duck type) */
+  constructor(transport) {
     this.#decoder = new FrameDecoder({
       decodeText: bytes => new TextDecoder().decode(bytes),
       onFrame: json => {
@@ -44,81 +45,26 @@ export class EngineConnection {
         this.onmessage?.(obj);
       },
     });
+
+    if(transport) {
+      this.#transport = transport;
+      this.#readLoop();
+    }
   }
 
   /** Connect to a 'host:port' address where the engine listens (QUICKJS_DEBUG_LISTEN_ADDRESS). */
-  static async connect(address, { retries = 20, delay = 100 } = {}) {
-    const conn = new EngineConnection();
-    const [host, port] = address.split(':');
-    const addr = new SockAddr(AF_INET, host, +port);
-
-    /* the engine needs a moment after spawn before it listens; retry.
-       AsyncSocket.connect() resolves with undefined on success and
-       rejects (SyscallError) on failure, e.g. ECONNREFUSED. */
-    for(let attempt = 0; ; attempt++) {
-      const sock = new AsyncSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-      let ret;
-
-      try {
-        ret = await sock.connect(addr);
-      } catch(e) {
-        ret = -1;
-      }
-
-      if(ret === undefined || ret >= 0) {
-        conn.#sock = sock;
-        conn.#readLoop();
-        return conn;
-      }
-
-      sock.close();
-      if(attempt >= retries) throw new Error(`EngineConnection: cannot connect to ${address} after ${attempt + 1} attempts`);
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
+  static async connect(address, { transport: Transport = SocketTransport, ...options } = {}) {
+    return new EngineConnection(await Transport.connect(address, options));
   }
 
-  static async accept(address) {
-    const conn = new EngineConnection();
-    const [host, port] = address.split(':');
-    const addr = new SockAddr(AF_INET, host, +port);
-    const remote = new SockAddr(AF_INET);
-
-    const sock = new AsyncSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-
-    sock.setsockopt(SOL_SOCKET, SO_REUSEADDR, [1]);
-    sock.setsockopt(SOL_SOCKET, SO_REUSEPORT, [1]);
-
-    sock.bind(addr);
-    sock.listen(5);
-    let ret;
-
-    try {
-      ret = await sock.accept(remote);
-    } catch(e) {
-      ret = -1;
-    }
-    sock.close();
-
-    if(ret != -1) {
-      conn.#sock = ret;
-      conn.#readLoop();
-      return conn;
-    }
-
-    sock.close();
-    throw new Error(`EngineConnection: cannot accept at ${address}`);
+  /** Listen on 'host:port' for an engine connecting out (QUICKJS_DEBUG_ADDRESS). */
+  static async accept(address, { transport: Transport = SocketTransport, ...options } = {}) {
+    return new EngineConnection(await Transport.accept(address, options));
   }
 
   async #readLoop() {
-    const sock = this.#sock;
-    const buf = new ArrayBuffer(65536);
-
     try {
-      for(;;) {
-        const r = await sock.recv(buf);
-        if(r <= 0) break;
-        this.#decoder.push(new Uint8Array(buf, 0, r));
-      }
+      for await(const chunk of this.#transport) this.#decoder.push(chunk);
     } catch(err) {
       if(!this.#closed) this.onerror?.(err);
     } finally {
@@ -126,18 +72,19 @@ export class EngineConnection {
     }
   }
 
-  /* AsyncSocket permits only one in-flight send ("Already a pending write");
-     chain sends so back-to-back messages don't throw */
+  /* transports may permit only one in-flight send (AsyncSocket:
+     "Already a pending write"); chain sends so back-to-back messages
+     don't throw */
   #sendq = Promise.resolve();
 
   sendMessage(msg) {
-    if(!this.#sock) throw new Error('EngineConnection: not connected');
+    if(!this.#transport) throw new Error('EngineConnection: not connected');
     const json = typeof msg == 'string' ? msg : JSON.stringify(msg);
     const byteLength = this.#encoder.encode(json).length;
     const frame = frameMessage(json, byteLength);
     const sent = this.#sendq.then(() => {
-      if(!this.#sock) throw new Error('EngineConnection: closed');
-      return this.#sock.send(frame);
+      if(!this.#transport) throw new Error('EngineConnection: closed');
+      return this.#transport.send(frame);
     });
     this.#sendq = sent.catch(() => {});
     return sent;
@@ -147,9 +94,9 @@ export class EngineConnection {
     if(this.#closed) return;
     this.#closed = true;
     try {
-      this.#sock?.close();
+      this.#transport?.close();
     } catch(e) {}
-    this.#sock = null;
+    this.#transport = null;
     this.onclose?.();
   }
 
@@ -191,9 +138,12 @@ export async function LaunchEngineSession(args, address, options = {}) {
     return { ...engine, connection, session };
   }
 
-  const connection = EngineConnection.accept(address);
-  const engine = StartEngine(args, address, options);
-  const session = (await connection).attachSession(options);
+  let engine;
+  const connection = await EngineConnection.accept(address, {
+    ...options,
+    listening: () => (engine = StartEngine(args, address, options)),
+  });
+  const session = connection.attachSession(options);
   return { ...engine, connection, session };
 }
 
