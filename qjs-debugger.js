@@ -120,6 +120,7 @@ export class Debugger {
 
   print = (...args) => console.log(...args);
   printRaw = s => (puts(s), stdout.flush());
+  onEvent = null; /* (kind: 'running' | 'stopped' | 'exited') => {} — for GUI views */
 
   constructor({ interpreter = 'qjs', address = '127.0.0.1:9901', listen = true, transport = SocketTransport } = {}) {
     this.interpreter = interpreter;
@@ -332,6 +333,7 @@ export class Debugger {
     this.stack = [];
     this.currentFrame = 0;
     this.identifiers = [];
+    this.onEvent?.('exited');
   }
 
   /** Send a resuming request and wait for the next stop (or program exit). */
@@ -341,6 +343,7 @@ export class Debugger {
       return;
     }
 
+    this.onEvent?.('running');
     const stopped = this.session.waitEvent('stopped');
 
     try {
@@ -385,6 +388,8 @@ export class Debugger {
 
     /* fill the completion cache in the background; the prompt need not wait */
     this.#refreshIdentifiers().catch(() => {});
+
+    this.onEvent?.('stopped');
   }
 
   async #refreshIdentifiers() {
@@ -513,6 +518,7 @@ export class Debugger {
     if(arg) this.programArgs = splitArgs(arg);
 
     this.print(`Starting program: ${this.interpreter} ${[this.program, ...this.programArgs].join(' ')}`);
+    this.onEvent?.('running');
 
     const entry = await this.launch();
     if(!entry) return;

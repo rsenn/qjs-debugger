@@ -20,4 +20,5 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink qjs-debugger \$ENV{DE
 install(FILES codec.js session.js engine-connection.js transport.js DESTINATION bin)
 
 # gui mode (loaded dynamically by qjs-debugger -m gui)
-install(FILES gui/main.js gui/theme.js gui/widgets.js DESTINATION bin/gui)
+install(FILES gui/main.js gui/theme.js gui/widgets.js gui/toolbar.js gui/source-pane.js gui/console-pane.js
+        DESTINATION bin/gui)
