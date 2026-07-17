@@ -10,6 +10,7 @@ import { contains, fillRect, strokeRect, text } from './widgets.js';
 
 const BUTTONS = [
   { id: 'run', label: 'Run' },
+  { id: 'start', label: 'Start' },
   { id: 'continue', label: 'Continue' },
   { id: 'pause', label: 'Pause' },
   { id: 'next', label: 'Next' },
@@ -26,6 +27,7 @@ function stopped(dbg) {
 export function enabled(dbg, id) {
   switch (id) {
     case 'run':
+    case 'start':
       return !!dbg.program && !dbg.busy;
     case 'continue':
       return stopped(dbg) || (!!dbg.program && !dbg.child && !dbg.busy);

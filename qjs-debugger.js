@@ -163,7 +163,8 @@ export class Debugger {
   static commands = {
     file: ['cmdFile', 'file FILE -- set the program to be debugged', false],
     run: ['cmdRun', 'run -- start the debugged program (r)', false],
-    start: ['cmdStart', 'start -- run and stop at program entry', false],
+    start: ['cmdStart', 'start -- run to a temporary breakpoint on main() (or the first statement)', false],
+    starti: ['cmdStarti', 'starti -- run and stop at program entry', false],
     break: ['cmdBreak', 'break [FILE:]LINE | FUNCTION | Class.prototype.method -- set breakpoint (b)', false],
     delete: ['cmdDelete', 'delete [NUM...] -- delete breakpoints (d)', false],
     catch: ['cmdCatch', 'catch [throw|off] -- stop on exceptions', false],
@@ -378,7 +379,14 @@ export class Debugger {
       let prefix = '';
       if(ev.reason == 'breakpoint') {
         const bp = this.breakpoints.find(b => b.file == f.filename && b.line == f.line);
-        if(bp) prefix = `Breakpoint ${bp.num}, `;
+        if(bp) {
+          prefix = `${bp.temp ? 'Temporary breakpoint' : 'Breakpoint'} ${bp.num}, `;
+
+          if(bp.temp) {
+            this.breakpoints = this.breakpoints.filter(b => b !== bp);
+            this.#sendBreakpoints(bp.file);
+          }
+        }
       } else if(ev.reason == 'exception') prefix = 'Stopped on exception, ';
       else if(ev.reason == 'pause') prefix = 'Program interrupted, ';
 
@@ -456,6 +464,18 @@ export class Debugger {
     return files;
   }
 
+  #findFunctionIn(file, name) {
+    let text;
+    try {
+      text = readFileSync(file, 'utf-8');
+    } catch(e) {
+      return null;
+    }
+
+    for(const { key, line } of ScanFunctions(text)) if(key == name) return { file, line };
+    return null;
+  }
+
   #findFunction(name) {
     const matches = [];
 
@@ -516,6 +536,21 @@ export class Debugger {
   }
 
   async cmdStart(arg) {
+    /* gdb semantics: temporary breakpoint on main() and run. Without a
+       main() in the primary source, stop at the first top-level
+       statement instead (the entry stop). */
+    const loc = this.program && this.#findFunctionIn(this.program, 'main');
+    if(!loc) return this.#start(arg, false);
+
+    const bp = { num: this.nextBpNum++, ...loc, spec: 'main', temp: true };
+    this.breakpoints.push(bp);
+    this.print(`Temporary breakpoint ${bp.num} at ${bp.file}:${bp.line}`);
+    this.#sendBreakpoints(bp.file);
+
+    await this.#start(arg, true);
+  }
+
+  async cmdStarti(arg) {
     await this.#start(arg, false);
   }
 

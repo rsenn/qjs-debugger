@@ -294,7 +294,7 @@ class GuiApp {
     /* on a not-started program, resuming buttons behave like gdb:
        Continue runs, Next/Step stop at the entry */
     let line = id;
-    if(!dbg.child) line = id == 'continue' ? 'run' : 'start';
+    if(!dbg.child && id != 'run' && id != 'start') line = id == 'continue' ? 'run' : 'starti';
 
     dbg.execute(line).catch(err => dbg.print(`${err?.message ?? err}`));
   }
