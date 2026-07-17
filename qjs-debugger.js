@@ -417,10 +417,14 @@ export class Debugger {
 
   /* ---------------- breakpoints ---------------- */
 
+  /* the engine scans pc2line forward and expects the list sorted by line */
   #sendBreakpoints(file) {
     this.session?.breakpoints(
       file,
-      this.breakpoints.filter(b => b.file == file).map(b => ({ line: b.line })),
+      this.breakpoints
+        .filter(b => b.file == file)
+        .map(b => ({ line: b.line }))
+        .sort((a, b) => a.line - b.line),
     );
   }
 
