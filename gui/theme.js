@@ -9,7 +9,7 @@ import { gethome } from 'path';
 import { RGB } from 'nanovg';
 
 export const FONT = 'fixed';
-export const FONT_SIZE = 13;
+export const FONT_SIZE = 12;
 
 const FONT_PATHS = [
   gethome() + '/.fonts/MiscFixedSC613.ttf',
@@ -19,7 +19,18 @@ const FONT_PATHS = [
 
 /** Register the UI font on the nanovg context; returns the path or null. */
 export function loadFont(vg) {
-  for(const path of FONT_PATHS) if(vg.CreateFont(FONT, path) >= 0) return path;
+  for(const path of FONT_PATHS)
+    if(vg.CreateFont(FONT, path) >= 0) {
+      /* measure the monospace advance; column math everywhere uses it */
+      try {
+        vg.FontFace(FONT);
+        vg.FontSize(FONT_SIZE);
+        const w = vg.TextBounds(0, 0, 'MMMMMMMMMM');
+        if(w > 0) metrics.charW = w / 10;
+      } catch(e) {}
+      return path;
+    }
+
   return null;
 }
 
@@ -59,6 +70,7 @@ export const metrics = {
   toolbarH: 26,
   consoleH: 160,
   titleH: 18,
-  rowH: 14,
+  rowH: FONT_SIZE + 1,
   pad: 6,
+  charW: 7 /* remeasured from the font in loadFont() */,
 };

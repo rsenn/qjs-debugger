@@ -7,7 +7,6 @@
 import { colors, FONT_SIZE, metrics } from './theme.js';
 import { contains, fillRect, strokeRect, text } from './widgets.js';
 
-const CHAR_W = 7;
 
 const BUTTONS = [
   { id: 'run', label: 'Run' },
@@ -50,7 +49,7 @@ function layout(rect) {
   let x = rect.x + pad;
 
   return BUTTONS.map(b => {
-    const w = b.label.length * CHAR_W + 2 * pad;
+    const w = Math.ceil(b.label.length * metrics.charW) + 2 * pad;
     const r = { ...b, x, y: rect.y + 3, w, h };
     x += w + pad;
     return r;

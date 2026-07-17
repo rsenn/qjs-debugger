@@ -14,7 +14,6 @@ import { fillRect, text } from './widgets.js';
 const colorizeJs = str => REPL.prototype.colorizeJs.call(null, str);
 
 const GUTTER_DOT = 10; /* px reserved for the breakpoint dot */
-const CHAR_W = 7; /* MiscFixedSC613 advance at size 13 */
 
 export class SourcePane {
   file = null;
@@ -71,7 +70,7 @@ export class SourcePane {
     if(!this.#lines) return null;
 
     const { rowH, pad } = metrics;
-    const numW = String(this.#lines.length).length * CHAR_W;
+    const numW = Math.ceil(String(this.#lines.length).length * metrics.charW);
     if(x - rect.x > GUTTER_DOT + numW + 2 * pad) return null;
 
     const line = this.#top + Math.floor((y - rect.y - pad) / rowH);
@@ -102,7 +101,7 @@ export class SourcePane {
     const stopLine = f?.filename == this.file ? f.line : -1;
     const bpLines = new Set(dbg.breakpoints.filter(b => b.file == this.file).map(b => b.line));
 
-    const numW = String(this.#lines.length).length * CHAR_W;
+    const numW = Math.ceil(String(this.#lines.length).length * metrics.charW);
     const textX = rect.x + GUTTER_DOT + numW + 2 * pad;
 
     let y = rect.y + pad;

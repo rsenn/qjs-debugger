@@ -7,7 +7,6 @@
 import { colors, FONT_SIZE, metrics, syntax } from './theme.js';
 import { text } from './widgets.js';
 
-const CHAR_W = 7;
 
 export class VarsPane {
   #scroll = 0;
@@ -44,7 +43,7 @@ export class VarsPane {
         const name = String(v.name ?? '?');
 
         text(vg, rect.x + pad, y, name, syntax.identifier);
-        text(vg, rect.x + pad + (name.length + 1) * CHAR_W, y, `= ${v.value ?? ''}`, colors.text);
+        text(vg, rect.x + pad + Math.round((name.length + 1) * metrics.charW), y, `= ${v.value ?? ''}`, colors.text);
       }
     }
 
