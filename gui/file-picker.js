@@ -12,6 +12,8 @@ export class FilePicker {
   files = null; /* null = closed */
   #scroll = 0;
   #rect = null; /* overlay rect of the last draw */
+  #content = null; /* rows area of the last draw */
+  #lastRows = 1;
 
   get isOpen() {
     return Array.isArray(this.files);
@@ -25,6 +27,20 @@ export class FilePicker {
   close() {
     this.files = null;
     this.#rect = null;
+    this.#content = null;
+  }
+
+  /* uniform scrollbar interface; content rect for main.js' hit test */
+  get contentRect() {
+    return this.#content;
+  }
+
+  get scrollInfo() {
+    return { total: this.files?.length ?? 0, visible: this.#lastRows, offset: this.#scroll };
+  }
+
+  setScrollOffset(o) {
+    this.#scroll = Math.max(0, o);
   }
 
   scrollBy(n) {
@@ -47,7 +63,7 @@ export class FilePicker {
       h: Math.floor(h),
     });
 
-    const content = panel(vg, rect, 'Select source');
+    const content = (this.#content = panel(vg, rect, 'Select source'));
 
     vg.Save();
     vg.IntersectScissor(content.x, content.y, content.w, content.h);
@@ -55,6 +71,7 @@ export class FilePicker {
     const rows = Math.max(1, Math.floor((content.h - pad) / rowH));
     const max = Math.max(0, this.files.length - rows);
     if(this.#scroll > max) this.#scroll = max;
+    this.#lastRows = rows;
 
     let y = content.y + pad;
     for(let i = this.#scroll; i < this.files.length && i < this.#scroll + rows; i++, y += rowH) {

@@ -51,6 +51,9 @@ export function contains(rect, x, y) {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
 
+/** Clickable zone at the right edge; the visual bar is 4px of it. */
+export const SCROLLBAR_W = 10;
+
 /** Right-edge scroll indicator; hidden when everything fits. */
 export function scrollbar(vg, rect, total, visible, offset) {
   if(!(total > visible)) return;
@@ -61,4 +64,17 @@ export function scrollbar(vg, rect, total, visible, offset) {
   const th = Math.max(12, (visible / total) * rect.h);
   const ty = rect.y + (Math.min(offset, total - visible) / (total - visible)) * (rect.h - th);
   fillRect(vg, x, ty, 4, th, colors.border);
+}
+
+export function scrollbarHit(rect, x, y) {
+  return x >= rect.x + rect.w - SCROLLBAR_W && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
+}
+
+/** Offset-from-top for a pointer at `y` on the track (thumb-centered, clamped). */
+export function scrollbarOffset(rect, y, total, visible) {
+  if(!(total > visible)) return 0;
+
+  const th = Math.max(12, (visible / total) * rect.h);
+  const f = (y - rect.y - th / 2) / (rect.h - th);
+  return Math.round(Math.max(0, Math.min(1, f)) * (total - visible));
 }

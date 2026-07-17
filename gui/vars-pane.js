@@ -17,6 +17,7 @@ const INDENT = 2; /* chars per tree level */
 export class VarsPane {
   #scroll = 0;
   #flat = []; /* rows of the last draw, for rowAt() */
+  #lastRows = 1;
 
   scrollBy(n) {
     this.#scroll = Math.max(0, this.#scroll + n);
@@ -24,6 +25,15 @@ export class VarsPane {
 
   reset() {
     this.#scroll = 0;
+  }
+
+  /* uniform scrollbar interface */
+  get scrollInfo() {
+    return { total: this.#flat.length, visible: this.#lastRows, offset: this.#scroll };
+  }
+
+  setScrollOffset(o) {
+    this.#scroll = Math.max(0, o);
   }
 
   /** Flatten displays + expanded variable tree into draw rows. */
@@ -73,6 +83,7 @@ export class VarsPane {
     const rows = Math.max(1, Math.floor((rect.h - pad) / rowH));
     const max = Math.max(0, this.#flat.length - rows);
     if(this.#scroll > max) this.#scroll = max;
+    this.#lastRows = rows;
 
     let y = rect.y + pad;
     for(let i = this.#scroll; i < this.#flat.length && i < this.#scroll + rows; i++, y += rowH) {

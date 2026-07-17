@@ -18,7 +18,7 @@ import { exit } from 'std';
 import { CONTEXT_VERSION_MAJOR, CONTEXT_VERSION_MINOR, context, KEY_ESCAPE, KEY_F5, KEY_F10, KEY_F11, OPENGL_CORE_PROFILE, OPENGL_FORWARD_COMPAT, OPENGL_PROFILE, poll, RESIZABLE, SAMPLES, Window } from 'glfw';
 import { ANTIALIAS, CreateGL3, DeleteGL3, STENCIL_STROKES } from 'nanovg';
 import { colors, metrics, loadFont } from './theme.js';
-import { contains, fillRect, panel } from './widgets.js';
+import { contains, fillRect, panel, scrollbarHit, scrollbarOffset } from './widgets.js';
 import { ConsolePane } from './console-pane.js';
 import { FilePicker } from './file-picker.js';
 import { SourcePane } from './source-pane.js';
@@ -48,6 +48,7 @@ class GuiApp {
   panes = {};
   content = {}; /* panel content rects from the last frame (for hit tests) */
   mouse = { x: 0, y: 0 };
+  scrollDrag = null; /* { target, rect } while a scrollbar is held */
   vars = null; /* null | 'pending' | [{ name, value, variablesReference }] — locals of the selected frame */
   varChildren = new Map(); /* ref -> rows | 'pending' (refs are valid per pause only) */
   expandedVars = new Set();
@@ -141,6 +142,26 @@ class GuiApp {
     }
   }
 
+  /** Scrollable view whose scrollbar zone is under (x, y), if it can scroll. */
+  scrollTarget(x, y) {
+    const { content, picker } = this;
+    const targets = picker.isOpen
+      ? [[picker, picker.contentRect]]
+      : [
+          [this.source, content.source],
+          [this.varsPane, content.vars],
+          [this.console, content.console],
+        ];
+
+    for(const [target, rect] of targets)
+      if(rect && scrollbarHit(rect, x, y)) {
+        const { total, visible } = target.scrollInfo;
+        if(total > visible) return { target, rect };
+      }
+
+    return null;
+  }
+
   selectFrame(i) {
     const { dbg } = this;
     if(!(i >= 0 && i < dbg.stack.length) || i == dbg.currentFrame) return;
@@ -204,12 +225,33 @@ class GuiApp {
 
       handleCursorPos(x, y) {
         app.mouse = { x, y };
+
+        if(app.scrollDrag) {
+          const { target, rect } = app.scrollDrag;
+          const { total, visible } = target.scrollInfo;
+          target.setScrollOffset(scrollbarOffset(rect, y, total, visible));
+        }
       },
 
       handleMouseButton(button, action) {
-        if(button != MB_LEFT || action != PRESS) return;
+        if(button != MB_LEFT) return;
+
+        if(action != PRESS) {
+          app.scrollDrag = null;
+          return;
+        }
+
         const { x, y } = app.mouse;
         const { content } = app;
+
+        /* scrollbar press: jump there and start dragging the thumb */
+        const scroll = app.scrollTarget(x, y);
+        if(scroll) {
+          const { total, visible } = scroll.target.scrollInfo;
+          scroll.target.setScrollOffset(scrollbarOffset(scroll.rect, y, total, visible));
+          app.scrollDrag = scroll;
+          return;
+        }
 
         /* modal file picker: a row selects, anything else dismisses */
         if(app.picker.isOpen) {

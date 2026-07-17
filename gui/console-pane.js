@@ -12,6 +12,8 @@ export class ConsolePane {
   #lines = [];
   #partial = ''; /* trailing chunk without a newline yet */
   #scroll = 0; /* lines scrolled up from the bottom */
+  #lastTotal = 0; /* from the last draw, for the scrollbar interface */
+  #lastRows = 1;
 
   /** One complete message line (dbg.print). */
   push(str) {
@@ -38,6 +40,15 @@ export class ConsolePane {
     this.#scroll = Math.max(0, Math.min(max, this.#scroll + n));
   }
 
+  /* uniform scrollbar interface; #scroll counts from the bottom */
+  get scrollInfo() {
+    return { total: this.#lastTotal, visible: this.#lastRows, offset: Math.max(0, this.#lastTotal - this.#lastRows - this.#scroll) };
+  }
+
+  setScrollOffset(o) {
+    this.#scroll = Math.max(0, this.#lastTotal - this.#lastRows - o);
+  }
+
   draw(vg, rect) {
     const { rowH, pad } = metrics;
     const rows = Math.max(1, Math.floor((rect.h - pad) / rowH));
@@ -45,6 +56,9 @@ export class ConsolePane {
     const all = this.#partial ? [...this.#lines, this.#partial] : this.#lines;
     const end = Math.max(0, all.length - this.#scroll);
     const start = Math.max(0, end - rows);
+
+    this.#lastTotal = all.length;
+    this.#lastRows = rows;
 
     vg.Save();
     vg.IntersectScissor(rect.x, rect.y, rect.w, rect.h);

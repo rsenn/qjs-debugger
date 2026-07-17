@@ -66,6 +66,15 @@ export class SourcePane {
     this.#top = Math.max(1, Math.min(this.#lines.length, this.#top + n));
   }
 
+  /* uniform scrollbar interface (see main.js #scrollTarget) */
+  get scrollInfo() {
+    return { total: this.#lines?.length ?? 0, visible: this.#visibleRows, offset: this.#top - 1 };
+  }
+
+  setScrollOffset(o) {
+    if(this.#lines) this.#top = Math.max(1, Math.min(this.#lines.length, o + 1));
+  }
+
   /** Line number when (x, y) is in the breakpoint gutter, else null. */
   gutterHit(rect, x, y) {
     if(!this.#lines) return null;
