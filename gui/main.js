@@ -18,9 +18,11 @@ import { exit } from 'std';
 import { CONTEXT_VERSION_MAJOR, CONTEXT_VERSION_MINOR, context, KEY_ESCAPE, KEY_F5, KEY_F10, KEY_F11, OPENGL_CORE_PROFILE, OPENGL_FORWARD_COMPAT, OPENGL_PROFILE, poll, RESIZABLE, SAMPLES, Window } from 'glfw';
 import { ANTIALIAS, CreateGL3, DeleteGL3, STENCIL_STROKES } from 'nanovg';
 import { colors, metrics, loadFont } from './theme.js';
-import { contains, fillRect, panel, text } from './widgets.js';
+import { contains, fillRect, panel } from './widgets.js';
 import { ConsolePane } from './console-pane.js';
 import { SourcePane } from './source-pane.js';
+import { StackPane } from './stack-pane.js';
+import { VarsPane } from './vars-pane.js';
 import * as toolbar from './toolbar.js';
 
 /* glfw literals the module exports no constants for */
@@ -43,12 +45,17 @@ export function StartGUI(dbg) {
 class GuiApp {
   running = true;
   panes = {};
+  content = {}; /* panel content rects from the last frame (for hit tests) */
   mouse = { x: 0, y: 0 };
+  vars = null; /* null | 'pending' | [{ name, value }] — locals of the selected frame */
+  #varsSeq = 0;
 
   constructor(dbg) {
     this.dbg = dbg;
     this.console = new ConsolePane();
     this.source = new SourcePane();
+    this.stack = new StackPane();
+    this.varsPane = new VarsPane();
 
     dbg.print = (...args) => this.console.push(args.join(' '));
     dbg.printRaw = s => this.console.pushRaw(s);
@@ -61,7 +68,40 @@ class GuiApp {
     if(kind == 'stopped') {
       const f = this.dbg.stack[this.dbg.currentFrame];
       if(f?.filename) this.source.show(f.filename, f.line);
+      this.#refreshVars();
+    } else {
+      this.vars = null;
+      this.varsPane.reset();
     }
+  }
+
+  /** Fetch the selected frame's locals; panes render 'pending' meanwhile. */
+  #refreshVars() {
+    const { dbg } = this;
+
+    if(!dbg.session || !dbg.stack.length) {
+      this.vars = null;
+      return;
+    }
+
+    const frame = dbg.stack[dbg.currentFrame]?.id ?? 0;
+    const seq = ++this.#varsSeq;
+    this.vars = 'pending';
+
+    dbg.session
+      .variables([frame, 1])
+      .then(vars => seq == this.#varsSeq && (this.vars = vars ?? []))
+      .catch(() => seq == this.#varsSeq && (this.vars = []));
+  }
+
+  selectFrame(i) {
+    const { dbg } = this;
+    if(!(i >= 0 && i < dbg.stack.length) || i == dbg.currentFrame) return;
+
+    dbg.currentFrame = i;
+    const f = dbg.stack[i];
+    if(f?.filename) this.source.show(f.filename, f.line);
+    this.#refreshVars();
   }
 
   /** Toolbar/keyboard commands, routed through the same command interpreter as the REPL. */
@@ -122,10 +162,16 @@ class GuiApp {
       handleMouseButton(button, action) {
         if(button != MB_LEFT || action != PRESS) return;
         const { x, y } = app.mouse;
+        const { content } = app;
 
         if(contains(app.panes.toolbar, x, y)) {
           const id = toolbar.hit(app, app.panes.toolbar, x, y);
           if(id) app.command(id);
+        } else if(content.source && contains(content.source, x, y)) {
+          const line = app.source.gutterHit(content.source, x, y);
+          if(line != null && app.source.file) app.dbg.toggleBreakpoint(app.source.file, line);
+        } else if(content.stack && contains(content.stack, x, y)) {
+          app.selectFrame(app.stack.rowAt(app, content.stack, x, y));
         }
       },
 
@@ -134,6 +180,7 @@ class GuiApp {
         const lines = -Math.sign(dy) * SCROLL_LINES;
 
         if(contains(app.panes.source, x, y)) app.source.scrollBy(lines);
+        else if(contains(app.panes.vars, x, y)) app.varsPane.scrollBy(lines);
         else if(contains(app.panes.console, x, y)) app.console.scrollBy(-lines);
       },
 
@@ -175,17 +222,10 @@ class GuiApp {
 
     toolbar.draw(this, panes.toolbar);
 
-    this.source.draw(this, panel(vg, panes.source, this.source.file ?? 'Source'));
-
-    for(const [name, title] of [
-      ['stack', 'Stack'],
-      ['vars', 'Variables'],
-    ]) {
-      const content = panel(vg, panes[name], title);
-      text(vg, content.x + metrics.pad, content.y + metrics.pad, '(phase 3)', colors.dim);
-    }
-
-    this.console.draw(vg, panel(vg, panes.console, 'Console'));
+    this.source.draw(this, (this.content.source = panel(vg, panes.source, this.source.file ?? 'Source')));
+    this.stack.draw(this, (this.content.stack = panel(vg, panes.stack, 'Stack')));
+    this.varsPane.draw(this, (this.content.vars = panel(vg, panes.vars, 'Variables')));
+    this.console.draw(vg, (this.content.console = panel(vg, panes.console, 'Console')));
 
     vg.EndFrame();
   }

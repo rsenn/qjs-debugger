@@ -549,6 +549,22 @@ export class Debugger {
     this.#sendBreakpoints(bp.file);
   }
 
+  /** Add or remove a breakpoint at file:line (GUI gutter click). */
+  toggleBreakpoint(file, line) {
+    const i = this.breakpoints.findIndex(b => b.file == file && b.line == line);
+
+    if(i >= 0) {
+      const [bp] = this.breakpoints.splice(i, 1);
+      this.print(`Deleted breakpoint ${bp.num}`);
+    } else {
+      const bp = { num: this.nextBpNum++, file, line, spec: `${file}:${line}` };
+      this.breakpoints.push(bp);
+      this.print(`Breakpoint ${bp.num} at ${bp.file}:${bp.line}`);
+    }
+
+    this.#sendBreakpoints(file);
+  }
+
   cmdDelete(arg) {
     let doomed;
 

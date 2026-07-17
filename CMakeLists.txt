@@ -21,4 +21,5 @@ install(FILES codec.js session.js engine-connection.js transport.js DESTINATION 
 
 # gui mode (loaded dynamically by qjs-debugger -m gui)
 install(FILES gui/main.js gui/theme.js gui/widgets.js gui/toolbar.js gui/source-pane.js gui/console-pane.js
+              gui/stack-pane.js gui/vars-pane.js
         DESTINATION bin/gui)

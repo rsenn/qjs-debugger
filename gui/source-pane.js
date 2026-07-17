@@ -66,6 +66,18 @@ export class SourcePane {
     this.#top = Math.max(1, Math.min(this.#lines.length, this.#top + n));
   }
 
+  /** Line number when (x, y) is in the breakpoint gutter, else null. */
+  gutterHit(rect, x, y) {
+    if(!this.#lines) return null;
+
+    const { rowH, pad } = metrics;
+    const numW = String(this.#lines.length).length * CHAR_W;
+    if(x - rect.x > GUTTER_DOT + numW + 2 * pad) return null;
+
+    const line = this.#top + Math.floor((y - rect.y - pad) / rowH);
+    return line >= 1 && line <= this.#lines.length ? line : null;
+  }
+
   #rows = 0;
   get #visibleRows() {
     return this.#rows || 20;
