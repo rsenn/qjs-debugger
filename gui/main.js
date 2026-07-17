@@ -20,6 +20,7 @@ import { ANTIALIAS, CreateGL3, DeleteGL3, STENCIL_STROKES } from 'nanovg';
 import { colors, metrics, loadFont } from './theme.js';
 import { contains, fillRect, panel } from './widgets.js';
 import { ConsolePane } from './console-pane.js';
+import { FilePicker } from './file-picker.js';
 import { SourcePane } from './source-pane.js';
 import { StackPane } from './stack-pane.js';
 import { VarsPane } from './vars-pane.js';
@@ -59,10 +60,12 @@ class GuiApp {
     this.source = new SourcePane();
     this.stack = new StackPane();
     this.varsPane = new VarsPane();
+    this.picker = new FilePicker();
 
     dbg.print = (...args) => this.console.push(args.join(' '));
     dbg.printRaw = s => this.console.pushRaw(s);
     dbg.onEvent = kind => this.#onDebugEvent(kind);
+    dbg.echoSourceLine = false; /* the source pane shows the stopped-at line */
 
     if(dbg.program) this.source.show(dbg.program, 1);
   }
@@ -208,6 +211,20 @@ class GuiApp {
         const { x, y } = app.mouse;
         const { content } = app;
 
+        /* modal file picker: a row selects, anything else dismisses */
+        if(app.picker.isOpen) {
+          const file = app.picker.fileAt(x, y);
+          if(file) app.source.show(file);
+          app.picker.close();
+          return;
+        }
+
+        /* the source pane's title (the path) opens the picker */
+        if(contains({ ...app.panes.source, h: metrics.titleH }, x, y)) {
+          app.picker.open(app.dbg.sourceFiles());
+          return;
+        }
+
         if(contains(app.panes.toolbar, x, y)) {
           const id = toolbar.hit(app, app.panes.toolbar, x, y);
           if(id) app.command(id);
@@ -225,7 +242,8 @@ class GuiApp {
         const { x, y } = app.mouse;
         const lines = -Math.sign(dy) * SCROLL_LINES;
 
-        if(contains(app.panes.source, x, y)) app.source.scrollBy(lines);
+        if(app.picker.isOpen) app.picker.scrollBy(lines);
+        else if(contains(app.panes.source, x, y)) app.source.scrollBy(lines);
         else if(contains(app.panes.vars, x, y)) app.varsPane.scrollBy(lines);
         else if(contains(app.panes.console, x, y)) app.console.scrollBy(-lines);
       },
@@ -233,7 +251,8 @@ class GuiApp {
       handleKey(key, scancode, action, mods) {
         if(action != PRESS && action != REPEAT) return;
 
-        if(key == KEY_ESCAPE) app.running = false;
+        if(key == KEY_ESCAPE && app.picker.isOpen) app.picker.close();
+        else if(key == KEY_ESCAPE) app.running = false;
         else if(key == KEY_F5) app.command('continue');
         else if(key == KEY_F10) app.command('next');
         else if(key == KEY_F11) app.command(mods & MOD_SHIFT ? 'finish' : 'step');
@@ -272,6 +291,8 @@ class GuiApp {
     this.stack.draw(this, (this.content.stack = panel(vg, panes.stack, 'Stack')));
     this.varsPane.draw(this, (this.content.vars = panel(vg, panes.vars, 'Variables')));
     this.console.draw(vg, (this.content.console = panel(vg, panes.console, 'Console')));
+
+    this.picker.draw(this, panes.source);
 
     vg.EndFrame();
   }

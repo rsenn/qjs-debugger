@@ -25,6 +25,7 @@ export class SourcePane {
   show(file, line) {
     if(file != this.file) {
       this.file = file;
+      this.#top = 1;
       try {
         const text = readFileSync(file, 'utf-8');
         this.#lines = text.split('\n');

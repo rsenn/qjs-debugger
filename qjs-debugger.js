@@ -121,6 +121,7 @@ export class Debugger {
   print = (...args) => console.log(...args);
   printRaw = s => (puts(s), stdout.flush());
   onEvent = null; /* (kind: 'running' | 'stopped' | 'exited') => {} — for GUI views */
+  echoSourceLine = true; /* print the stopped-at source line (off in GUI: the source pane shows it) */
 
   constructor({ interpreter = 'qjs', address = '127.0.0.1:9901', listen = true, transport = SocketTransport } = {}) {
     this.interpreter = interpreter;
@@ -371,7 +372,7 @@ export class Debugger {
 
     if(/^step/i.test(ev.reason ?? '')) {
       /* stepping: gdb prints just the new source line */
-      if(!this.#printSourceLine(f.filename, f.line)) this.#printFrame(f);
+      if(this.echoSourceLine && !this.#printSourceLine(f.filename, f.line)) this.#printFrame(f);
     } else {
       let prefix = '';
       if(ev.reason == 'breakpoint') {
@@ -381,7 +382,7 @@ export class Debugger {
       else if(ev.reason == 'pause') prefix = 'Program interrupted, ';
 
       this.print(`${prefix}${f.name ?? '??'} () at ${f.filename ?? '??'}:${f.line ?? '?'}`);
-      this.#printSourceLine(f.filename, f.line);
+      if(this.echoSourceLine) this.#printSourceLine(f.filename, f.line);
     }
 
     await this.#showDisplays();
@@ -426,6 +427,11 @@ export class Debugger {
         .map(b => ({ line: b.line }))
         .sort((a, b) => a.line - b.line),
     );
+  }
+
+  /** Public accessor for GUI views (file picker). */
+  sourceFiles() {
+    return this.#sourceFiles();
   }
 
   /** All source files reachable from the program via relative imports. */
