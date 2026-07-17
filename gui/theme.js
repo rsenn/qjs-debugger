@@ -24,8 +24,8 @@ export function loadFont(vg) {
 }
 
 export const colors = {
-  bg: RGB(24, 24, 26),
-  panel: RGB(32, 32, 35),
+  bg: RGB(0, 0, 0),
+  panel: RGB(0, 0, 0),
   border: RGB(70, 70, 76),
   titleBg: RGB(48, 48, 52),
   titleFg: RGB(210, 210, 210),
@@ -43,7 +43,7 @@ export const colors = {
    (same scheme as the repl: punctuation light blue, comments light green,
    identifiers yellow, keywords red) */
 export const syntax = {
-  default: RGB(130, 180, 255) /* punctuation, operators */,
+  default: RGB(90, 220, 220) /* punctuation, operators: cyan */,
   comment: RGB(130, 220, 130),
   string: RGB(100, 220, 220),
   regex: RGB(220, 120, 220),
