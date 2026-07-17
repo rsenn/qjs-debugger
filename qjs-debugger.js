@@ -122,6 +122,7 @@ export class Debugger {
   printRaw = s => (puts(s), stdout.flush());
   onEvent = null; /* (kind: 'running' | 'stopped' | 'exited') => {} — for GUI views */
   echoSourceLine = true; /* print the stopped-at source line (off in GUI: the source pane shows it) */
+  echoDisplays = true; /* print auto-displays at every stop (off in GUI: the watches pane shows them) */
 
   constructor({ interpreter = 'qjs', address = '127.0.0.1:9901', listen = true, transport = SocketTransport } = {}) {
     this.interpreter = interpreter;
@@ -385,7 +386,7 @@ export class Debugger {
       if(this.echoSourceLine) this.#printSourceLine(f.filename, f.line);
     }
 
-    await this.#showDisplays();
+    if(this.echoDisplays) await this.#showDisplays();
 
     /* fill the completion cache in the background; the prompt need not wait */
     this.#refreshIdentifiers().catch(() => {});
@@ -687,7 +688,7 @@ export class Debugger {
 
     const d = { num: this.nextDisplayNum++, expr: arg };
     this.displays.push(d);
-    if(this.session && this.stack.length) await this.#showDisplay(d);
+    if(this.echoDisplays && this.session && this.stack.length) await this.#showDisplay(d);
   }
 
   cmdUndisplay(arg) {

@@ -9,14 +9,19 @@
 import { colors, FONT_SIZE, metrics, syntax } from './theme.js';
 import { fillRect, text } from './widgets.js';
 
-const PROMPT = '(qjs-dbg) ';
-
 export class CommandLine {
   text = '';
   cursor = 0;
   #history = [];
   #hIndex = 0;
   #saved = '';
+
+  /** Reusable input: the console prompt by default, custom submit/complete for other panes. */
+  constructor({ prompt = '(qjs-dbg) ', onSubmit, complete } = {}) {
+    this.prompt = prompt;
+    this.onSubmit = onSubmit ?? ((app, line) => app.submitCommand(line));
+    this.complete = complete ?? ((app, text, cursor) => app.dbg.getCompletions(text, cursor));
+  }
 
   #set(text, cursor = text.length) {
     this.text = text;
@@ -45,7 +50,7 @@ export class CommandLine {
         }
         this.#hIndex = this.#history.length;
         this.#set('');
-        app.submitCommand(line);
+        this.onSubmit(app, line);
         return true;
       }
 
@@ -88,7 +93,7 @@ export class CommandLine {
         return true;
 
       case KEYS.TAB: {
-        const res = app.dbg.getCompletions(this.text, this.cursor);
+        const res = this.complete(app, this.text, this.cursor);
         const tab = res?.tab ?? [];
         if(!tab.length) return true;
 
@@ -109,16 +114,18 @@ export class CommandLine {
     return false;
   }
 
-  draw(vg, rect) {
+  draw(vg, rect, focused = true) {
     const { pad, charW } = metrics;
 
     fillRect(vg, rect.x, rect.y, rect.w, rect.h, colors.titleBg);
 
     const y = rect.y + Math.floor((rect.h - FONT_SIZE) / 2) + 1;
-    text(vg, rect.x + pad, y, PROMPT, colors.accent);
+    text(vg, rect.x + pad, y, this.prompt, focused ? colors.accent : colors.dim);
 
-    const tx = rect.x + pad + Math.round(PROMPT.length * charW);
+    const tx = rect.x + pad + Math.round(this.prompt.length * charW);
     text(vg, tx, y, this.text, colors.text);
+
+    if(!focused) return;
 
     /* block cursor */
     fillRect(vg, tx + Math.round(this.cursor * charW), y, Math.ceil(charW), FONT_SIZE, colors.border);

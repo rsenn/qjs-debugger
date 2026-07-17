@@ -25,6 +25,7 @@ import { FilePicker } from './file-picker.js';
 import { SourcePane } from './source-pane.js';
 import { StackPane } from './stack-pane.js';
 import { VarsPane } from './vars-pane.js';
+import { WatchPane } from './watch-pane.js';
 import * as toolbar from './toolbar.js';
 
 /* glfw literals the module exports no constants for */
@@ -59,6 +60,7 @@ class GuiApp {
   expandedVars = new Set();
   displayValues = []; /* [{ num, expr, value }] evaluated at each stop */
   #varsSeq = 0;
+  #dispSeq = 0;
 
   constructor(dbg) {
     this.dbg = dbg;
@@ -66,13 +68,23 @@ class GuiApp {
     this.source = new SourcePane();
     this.stack = new StackPane();
     this.varsPane = new VarsPane();
+    this.watches = new WatchPane();
     this.picker = new FilePicker();
     this.cmdline = new CommandLine();
+    this.focusedInput = this.cmdline;
+
+    this.watchInput = new CommandLine({
+      prompt: '+ ',
+      onSubmit: (app, line) => app.addWatch(line),
+      /* complete as identifiers, like 'print <expr>' */
+      complete: (app, text, cursor) => app.dbg.getCompletions('print ' + text, cursor + 6),
+    });
 
     dbg.print = (...args) => this.console.push(args.join(' '));
     dbg.printRaw = s => this.console.pushRaw(s);
     dbg.onEvent = kind => this.#onDebugEvent(kind);
     dbg.echoSourceLine = false; /* the source pane shows the stopped-at line */
+    dbg.echoDisplays = false; /* the watches pane shows them */
 
     if(dbg.program) this.source.show(dbg.program, 1);
   }
@@ -85,6 +97,7 @@ class GuiApp {
     } else {
       this.vars = null;
       this.#varsSeq++;
+      this.#dispSeq++;
       this.varChildren.clear();
       this.expandedVars.clear();
       this.displayValues = [];
@@ -115,15 +128,43 @@ class GuiApp {
       .then(vars => seq == this.#varsSeq && (this.vars = vars ?? []))
       .catch(() => seq == this.#varsSeq && (this.vars = []));
 
-    if(dbg.displays.length)
-      Promise.all(
-        dbg.displays.map(d =>
-          dbg.session
-            .evaluate(d.expr, frame)
-            .then(body => ({ num: d.num, expr: d.expr, value: body?.result ?? body?.value ?? '' }))
-            .catch(err => ({ num: d.num, expr: d.expr, value: `<error: ${err?.message ?? err}>` })),
-        ),
-      ).then(values => seq == this.#varsSeq && (this.displayValues = values));
+    this.refreshDisplays();
+  }
+
+  /** Re-evaluate all watch/display expressions in the selected frame. */
+  refreshDisplays() {
+    const { dbg } = this;
+
+    if(!dbg.session || !dbg.stack.length || !dbg.displays.length) {
+      this.displayValues = [];
+      return;
+    }
+
+    const frame = dbg.stack[dbg.currentFrame]?.id ?? 0;
+    const seq = ++this.#dispSeq;
+
+    Promise.all(
+      dbg.displays.map(d =>
+        dbg.session
+          .evaluate(d.expr, frame)
+          .then(body => ({ num: d.num, expr: d.expr, value: body?.result ?? body?.value ?? '' }))
+          .catch(err => ({ num: d.num, expr: d.expr, value: `<error: ${err?.message ?? err}>` })),
+      ),
+    ).then(values => seq == this.#dispSeq && (this.displayValues = values));
+  }
+
+  /** Watches pane input: add an expression (shared with the display command). */
+  addWatch(line) {
+    line = line.trim();
+    if(!line) return;
+
+    this.dbg.cmdDisplay(line).catch(err => this.dbg.print(`${err?.message ?? err}`));
+    this.refreshDisplays();
+  }
+
+  removeWatch(num) {
+    this.dbg.cmdUndisplay(String(num));
+    this.displayValues = this.displayValues.filter(d => d.num != num);
   }
 
   /** Expand/collapse a variable row; children are fetched on first expand. */
@@ -217,6 +258,7 @@ class GuiApp {
       : [
           [this.source, content.source],
           [this.varsPane, content.vars],
+          [this.watches, content.watches && this.watches.listRect(content.watches)],
           [this.console, content.console],
         ];
 
@@ -344,6 +386,15 @@ class GuiApp {
           app.selectFrame(app.stack.rowAt(app, content.stack, x, y));
         } else if(content.vars && contains(content.vars, x, y)) {
           app.toggleVar(app.varsPane.rowAt(content.vars, x, y));
+        } else if(content.watches && contains(content.watches, x, y)) {
+          if(contains(app.watches.inputRect(content.watches), x, y)) {
+            app.focusedInput = app.watchInput;
+          } else {
+            const row = app.watches.rowAt(content.watches, x, y);
+            if(row?.remove) app.removeWatch(row.num);
+          }
+        } else if(content.console && contains(app.panes.console, x, y)) {
+          app.focusedInput = app.cmdline;
         }
       },
 
@@ -354,6 +405,7 @@ class GuiApp {
         if(app.picker.isOpen) app.picker.scrollBy(lines);
         else if(contains(app.panes.source, x, y)) app.source.scrollBy(lines);
         else if(contains(app.panes.vars, x, y)) app.varsPane.scrollBy(lines);
+        else if(contains(app.panes.watches, x, y)) app.watches.scrollBy(lines);
         else if(contains(app.panes.console, x, y)) app.console.scrollBy(-lines);
       },
 
@@ -366,11 +418,11 @@ class GuiApp {
         else if(key == KEY_F10) app.command('next');
         else if(key == KEY_F11) app.command(mods & MOD_SHIFT ? 'finish' : 'step');
         else if(key == 82 /* R */ && mods & MOD_CONTROL) app.command('run');
-        else app.cmdline.handleKey(app, key);
+        else app.focusedInput.handleKey(app, key);
       },
 
       handleChar(codepoint) {
-        app.cmdline.handleChar(codepoint);
+        app.focusedInput.handleChar(codepoint);
       },
     });
   }
@@ -381,13 +433,15 @@ class GuiApp {
     const midY = toolbarH;
     const midH = this.height - toolbarH - consoleH;
     const srcW = Math.floor(w * 0.6);
-    const stackH = Math.floor(midH * 0.4);
+    const stackH = Math.floor(midH * 0.35);
+    const varsH = Math.floor(midH * 0.4);
 
     this.panes = {
       toolbar: { x: 0, y: 0, w, h: toolbarH },
       source: { x: 0, y: midY, w: srcW, h: midH },
       stack: { x: srcW, y: midY, w: w - srcW, h: stackH },
-      vars: { x: srcW, y: midY + stackH, w: w - srcW, h: midH - stackH },
+      vars: { x: srcW, y: midY + stackH, w: w - srcW, h: varsH },
+      watches: { x: srcW, y: midY + stackH + varsH, w: w - srcW, h: midH - stackH - varsH },
       console: { x: 0, y: midY + midH, w, h: consoleH },
     };
   }
@@ -404,12 +458,13 @@ class GuiApp {
     this.source.draw(this, (this.content.source = panel(vg, panes.source, this.source.file ?? 'Source')));
     this.stack.draw(this, (this.content.stack = panel(vg, panes.stack, 'Stack')));
     this.varsPane.draw(this, (this.content.vars = panel(vg, panes.vars, 'Variables')));
+    this.watches.draw(this, (this.content.watches = panel(vg, panes.watches, 'Watches')));
     /* console: scrollback above, the command input line on the bottom row */
     const consoleContent = panel(vg, panes.console, 'Console');
     const inputH = metrics.rowH + 4;
     this.content.console = { ...consoleContent, h: consoleContent.h - inputH };
     this.console.draw(vg, this.content.console);
-    this.cmdline.draw(vg, { x: consoleContent.x, y: consoleContent.y + consoleContent.h - inputH, w: consoleContent.w, h: inputH });
+    this.cmdline.draw(vg, { x: consoleContent.x, y: consoleContent.y + consoleContent.h - inputH, w: consoleContent.w, h: inputH }, this.focusedInput == this.cmdline);
 
     this.picker.draw(this, panes.source);
 

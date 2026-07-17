@@ -1,12 +1,10 @@
 /**
  * gui/vars-pane.js — variables of the selected frame as an expandable
- * tree, with auto-display expressions on top. The app owns all async
- * state; this pane renders and hit-tests:
+ * tree. The app owns all async state; this pane renders and hit-tests:
  *
  *   app.vars          null | 'pending' | [{ name, value, variablesReference }]
  *   app.varChildren   Map(ref -> rows | 'pending')
  *   app.expandedVars  Set(ref)
- *   app.displayValues [{ num, expr, value }]
  */
 
 import { colors, FONT_SIZE, metrics, syntax } from './theme.js';
@@ -36,11 +34,9 @@ export class VarsPane {
     this.#scroll = Math.max(0, o);
   }
 
-  /** Flatten displays + expanded variable tree into draw rows. */
+  /** Flatten the expanded variable tree into draw rows. */
   #flatten(app) {
     const rows = [];
-
-    for(const d of app.displayValues) rows.push({ kind: 'display', label: `${d.num}: ${d.expr}`, value: d.value, depth: 0, ref: 0 });
 
     /* the engine reuses one variablesReference per object, so cyclic
        graphs (obj.self = obj) repeat an expanded ref down the branch —
@@ -89,13 +85,6 @@ export class VarsPane {
     for(let i = this.#scroll; i < this.#flat.length && i < this.#scroll + rows; i++, y += rowH) {
       const r = this.#flat[i];
       let x = rect.x + pad + Math.round(r.depth * INDENT * charW);
-
-      if(r.kind == 'display') {
-        text(vg, x, y, r.label, colors.accent);
-        x += Math.round((r.label.length + 1) * charW);
-        text(vg, x, y, `= ${r.value ?? ''}`, colors.text);
-        continue;
-      }
 
       if(r.kind == 'info') {
         text(vg, x, y, r.label, colors.dim);
