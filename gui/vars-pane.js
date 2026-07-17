@@ -32,18 +32,24 @@ export class VarsPane {
 
     for(const d of app.displayValues) rows.push({ kind: 'display', label: `${d.num}: ${d.expr}`, value: d.value, depth: 0, ref: 0 });
 
-    const visit = (v, depth) => {
+    /* the engine reuses one variablesReference per object, so cyclic
+       graphs (obj.self = obj) repeat an expanded ref down the branch —
+       `path` stops the descent there */
+    const visit = (v, depth, path) => {
       const ref = v.variablesReference | 0;
       rows.push({ kind: 'var', label: String(v.name ?? '?'), value: v.value, depth, ref });
 
-      if(ref > 0 && app.expandedVars.has(ref)) {
+      if(ref > 0 && app.expandedVars.has(ref) && !path.has(ref)) {
         const kids = app.varChildren.get(ref);
         if(!Array.isArray(kids)) rows.push({ kind: 'info', label: '...', value: undefined, depth: depth + 1, ref: 0 });
-        else for(const k of kids) visit(k, depth + 1);
+        else {
+          const branch = new Set(path).add(ref);
+          for(const k of kids) visit(k, depth + 1, branch);
+        }
       }
     };
 
-    if(Array.isArray(app.vars)) for(const v of app.vars) visit(v, 0);
+    if(Array.isArray(app.vars)) for(const v of app.vars) visit(v, 0, new Set());
 
     return rows;
   }
