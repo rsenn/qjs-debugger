@@ -4,7 +4,7 @@
  */
 
 import { colors, FONT_SIZE, metrics } from './theme.js';
-import { text } from './widgets.js';
+import { scrollbar, text } from './widgets.js';
 
 const MAX_LINES = 1000;
 
@@ -51,6 +51,8 @@ export class ConsolePane {
 
     let y = rect.y + pad;
     for(let i = start; i < end; i++, y += rowH) text(vg, rect.x + pad, y, all[i]);
+
+    scrollbar(vg, rect, all.length, rows, start);
 
     vg.Restore();
   }

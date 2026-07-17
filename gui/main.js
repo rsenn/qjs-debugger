@@ -47,7 +47,10 @@ class GuiApp {
   panes = {};
   content = {}; /* panel content rects from the last frame (for hit tests) */
   mouse = { x: 0, y: 0 };
-  vars = null; /* null | 'pending' | [{ name, value }] — locals of the selected frame */
+  vars = null; /* null | 'pending' | [{ name, value, variablesReference }] — locals of the selected frame */
+  varChildren = new Map(); /* ref -> rows | 'pending' (refs are valid per pause only) */
+  expandedVars = new Set();
+  displayValues = []; /* [{ num, expr, value }] evaluated at each stop */
   #varsSeq = 0;
 
   constructor(dbg) {
@@ -71,13 +74,22 @@ class GuiApp {
       this.#refreshVars();
     } else {
       this.vars = null;
+      this.#varsSeq++;
+      this.varChildren.clear();
+      this.expandedVars.clear();
+      this.displayValues = [];
       this.varsPane.reset();
     }
   }
 
-  /** Fetch the selected frame's locals; panes render 'pending' meanwhile. */
+  /** Fetch the selected frame's locals and displays; panes render 'pending' meanwhile. */
   #refreshVars() {
     const { dbg } = this;
+
+    /* variablesReferences are only valid within one pause */
+    this.varChildren.clear();
+    this.expandedVars.clear();
+    this.displayValues = [];
 
     if(!dbg.session || !dbg.stack.length) {
       this.vars = null;
@@ -92,6 +104,38 @@ class GuiApp {
       .variables([frame, 1])
       .then(vars => seq == this.#varsSeq && (this.vars = vars ?? []))
       .catch(() => seq == this.#varsSeq && (this.vars = []));
+
+    if(dbg.displays.length)
+      Promise.all(
+        dbg.displays.map(d =>
+          dbg.session
+            .evaluate(d.expr, frame)
+            .then(body => ({ num: d.num, expr: d.expr, value: body?.result ?? body?.value ?? '' }))
+            .catch(err => ({ num: d.num, expr: d.expr, value: `<error: ${err?.message ?? err}>` })),
+        ),
+      ).then(values => seq == this.#varsSeq && (this.displayValues = values));
+  }
+
+  /** Expand/collapse a variable row; children are fetched on first expand. */
+  toggleVar(row) {
+    if(!(row?.ref > 0)) return;
+
+    if(this.expandedVars.has(row.ref)) {
+      this.expandedVars.delete(row.ref);
+      return;
+    }
+
+    this.expandedVars.add(row.ref);
+
+    if(!this.varChildren.has(row.ref)) {
+      const seq = this.#varsSeq;
+      this.varChildren.set(row.ref, 'pending');
+
+      this.dbg.session
+        ?.variables(row.ref)
+        .then(vars => seq == this.#varsSeq && this.varChildren.set(row.ref, vars ?? []))
+        .catch(() => seq == this.#varsSeq && this.varChildren.set(row.ref, []));
+    }
   }
 
   selectFrame(i) {
@@ -172,6 +216,8 @@ class GuiApp {
           if(line != null && app.source.file) app.dbg.toggleBreakpoint(app.source.file, line);
         } else if(content.stack && contains(content.stack, x, y)) {
           app.selectFrame(app.stack.rowAt(app, content.stack, x, y));
+        } else if(content.vars && contains(content.vars, x, y)) {
+          app.toggleVar(app.varsPane.rowAt(content.vars, x, y));
         }
       },
 

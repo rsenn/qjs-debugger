@@ -50,3 +50,15 @@ export function panel(vg, rect, title) {
 export function contains(rect, x, y) {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }
+
+/** Right-edge scroll indicator; hidden when everything fits. */
+export function scrollbar(vg, rect, total, visible, offset) {
+  if(!(total > visible)) return;
+
+  const x = rect.x + rect.w - 5;
+  fillRect(vg, x, rect.y, 4, rect.h, colors.titleBg);
+
+  const th = Math.max(12, (visible / total) * rect.h);
+  const ty = rect.y + (Math.min(offset, total - visible) / (total - visible)) * (rect.h - th);
+  fillRect(vg, x, ty, 4, th, colors.border);
+}

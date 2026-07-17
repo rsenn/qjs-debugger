@@ -8,7 +8,7 @@ import { readFileSync } from 'fs';
 import { ALIGN_LEFT, ALIGN_TOP } from 'nanovg';
 import { REPL } from 'repl';
 import { colors, FONT, FONT_SIZE, metrics, syntax } from './theme.js';
-import { fillRect, text } from './widgets.js';
+import { fillRect, scrollbar, text } from './widgets.js';
 
 /* colorizeJs is a pure function on REPL.prototype: per-char style names */
 const colorizeJs = str => REPL.prototype.colorizeJs.call(null, str);
@@ -124,6 +124,8 @@ export class SourcePane {
         x = vg.Text(Math.round(x), y, run.text.replaceAll('\t', '    '));
       }
     }
+
+    scrollbar(vg, rect, this.#lines.length, this.#rows, this.#top - 1);
 
     vg.Restore();
   }
