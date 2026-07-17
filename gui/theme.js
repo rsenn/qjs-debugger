@@ -39,6 +39,22 @@ export const colors = {
   currentLine: RGB(50, 60, 40),
 };
 
+/* source syntax colors, keyed by the style names REPL.colorizeJs emits
+   (same scheme as the repl: punctuation light blue, comments light green,
+   identifiers yellow, keywords red) */
+export const syntax = {
+  default: RGB(130, 180, 255) /* punctuation, operators */,
+  comment: RGB(130, 220, 130),
+  string: RGB(100, 220, 220),
+  regex: RGB(220, 120, 220),
+  number: RGB(120, 200, 120),
+  keyword: RGB(240, 100, 100),
+  type: RGB(240, 100, 100),
+  identifier: RGB(235, 220, 100),
+  function: RGB(235, 220, 100),
+  error: RGB(255, 80, 80),
+};
+
 export const metrics = {
   toolbarH: 26,
   consoleH: 160,

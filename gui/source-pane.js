@@ -5,8 +5,13 @@
  */
 
 import { readFileSync } from 'fs';
-import { colors, FONT_SIZE, metrics } from './theme.js';
+import { ALIGN_LEFT, ALIGN_TOP } from 'nanovg';
+import { REPL } from 'repl';
+import { colors, FONT, FONT_SIZE, metrics, syntax } from './theme.js';
 import { fillRect, text } from './widgets.js';
+
+/* colorizeJs is a pure function on REPL.prototype: per-char style names */
+const colorizeJs = str => REPL.prototype.colorizeJs.call(null, str);
 
 const GUTTER_DOT = 10; /* px reserved for the breakpoint dot */
 const CHAR_W = 7; /* MiscFixedSC613 advance at size 13 */
@@ -14,6 +19,7 @@ const CHAR_W = 7; /* MiscFixedSC613 advance at size 13 */
 export class SourcePane {
   file = null;
   #lines = null;
+  #runs = null; /* per line: [{ style, text }] from colorizeJs */
   #top = 1; /* first visible line, 1-based */
 
   /** Load (if needed) and center on `line`. */
@@ -21,13 +27,38 @@ export class SourcePane {
     if(file != this.file) {
       this.file = file;
       try {
-        this.#lines = readFileSync(file, 'utf-8').split('\n');
+        const text = readFileSync(file, 'utf-8');
+        this.#lines = text.split('\n');
+        this.#runs = this.#colorize(text, this.#lines);
       } catch(e) {
-        this.#lines = null;
+        this.#lines = this.#runs = null;
       }
     }
 
     if(this.#lines && line) this.#top = Math.max(1, line - Math.floor(this.#visibleRows / 2));
+  }
+
+  /** Group colorizeJs' per-char style names into per-line draw runs. */
+  #colorize(text, lines) {
+    const [, , styles] = colorizeJs(text);
+    const runs = [];
+    let off = 0;
+
+    for(const line of lines) {
+      const lineRuns = [];
+      let cur = null;
+
+      for(let j = 0; j < line.length; j++) {
+        const style = styles[off + j] ?? 'default';
+        if(cur && cur.style == style) cur.text += line[j];
+        else lineRuns.push((cur = { style, text: line[j] }));
+      }
+
+      runs.push(lineRuns);
+      off += line.length + 1; /* the '\n' */
+    }
+
+    return runs;
   }
 
   scrollBy(n) {
@@ -71,7 +102,16 @@ export class SourcePane {
       text(vg, rect.x + GUTTER_DOT + pad, y, String(n).padStart(String(this.#lines.length).length), n == stopLine ? colors.accent : colors.dim);
       if(n == stopLine) text(vg, rect.x + 2, y, '>', colors.accent);
 
-      text(vg, textX, y, this.#lines[n - 1].replaceAll('\t', '    '));
+      /* syntax-colored runs; vg.Text returns the x advance */
+      vg.FontFace(FONT);
+      vg.FontSize(FONT_SIZE);
+      vg.TextAlign(ALIGN_LEFT | ALIGN_TOP);
+
+      let x = textX;
+      for(const run of this.#runs[n - 1] ?? []) {
+        vg.FillColor(syntax[run.style] ?? colors.text);
+        x = vg.Text(Math.round(x), y, run.text.replaceAll('\t', '    '));
+      }
     }
 
     vg.Restore();
