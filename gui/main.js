@@ -18,7 +18,8 @@ import { exit } from 'std';
 import { CONTEXT_VERSION_MAJOR, CONTEXT_VERSION_MINOR, context, KEY_ESCAPE, KEY_F5, KEY_F10, KEY_F11, OPENGL_CORE_PROFILE, OPENGL_FORWARD_COMPAT, OPENGL_PROFILE, poll, RESIZABLE, SAMPLES, Window } from 'glfw';
 import { ANTIALIAS, CreateGL3, DeleteGL3, STENCIL_STROKES } from 'nanovg';
 import { colors, metrics, loadFont } from './theme.js';
-import { contains, fillRect, panel, scrollbarHit, scrollbarOffset } from './widgets.js';
+import { contains, fillRect, panel, scrollbarHit, scrollbarOffset, strokeRect, text } from './widgets.js';
+import { CommandLine } from './command-line.js';
 import { ConsolePane } from './console-pane.js';
 import { FilePicker } from './file-picker.js';
 import { SourcePane } from './source-pane.js';
@@ -49,6 +50,10 @@ class GuiApp {
   content = {}; /* panel content rects from the last frame (for hit tests) */
   mouse = { x: 0, y: 0 };
   scrollDrag = null; /* { target, rect } while a scrollbar is held */
+  tooltip = null; /* { text } for the source hover */
+  #hover = { key: null, since: 0, pending: false };
+  #cmdQueue = [];
+  #cmdBusy = false;
   vars = null; /* null | 'pending' | [{ name, value, variablesReference }] — locals of the selected frame */
   varChildren = new Map(); /* ref -> rows | 'pending' (refs are valid per pause only) */
   expandedVars = new Set();
@@ -62,6 +67,7 @@ class GuiApp {
     this.stack = new StackPane();
     this.varsPane = new VarsPane();
     this.picker = new FilePicker();
+    this.cmdline = new CommandLine();
 
     dbg.print = (...args) => this.console.push(args.join(' '));
     dbg.printRaw = s => this.console.pushRaw(s);
@@ -140,6 +146,67 @@ class GuiApp {
         .then(vars => seq == this.#varsSeq && this.varChildren.set(row.ref, vars ?? []))
         .catch(() => seq == this.#varsSeq && this.varChildren.set(row.ref, []));
     }
+  }
+
+  /** Console input: echo the line and run it through the command queue. */
+  submitCommand(line) {
+    const { dbg } = this;
+
+    line = line.trim();
+    this.console.push(`(qjs-dbg) ${line || ''}`);
+
+    if(!line) {
+      if(!dbg.lastRepeat) return;
+      line = dbg.lastRepeat;
+    }
+
+    this.#cmdQueue.push(line);
+    this.#drainCommands();
+  }
+
+  #drainCommands() {
+    if(this.#cmdBusy) return;
+
+    const line = this.#cmdQueue.shift();
+    if(line == undefined) return;
+
+    this.#cmdBusy = true;
+    this.dbg
+      .execute(line)
+      .catch(err => this.dbg.print(`${err?.message ?? err}`))
+      .finally(() => {
+        this.#cmdBusy = false;
+        this.#drainCommands();
+      });
+  }
+
+  /** Evaluate the identifier under the cursor after a short dwell (source hover). */
+  #updateHover() {
+    const { dbg, mouse } = this;
+    const rect = this.content.source;
+
+    const usable = rect && dbg.session && !dbg.busy && dbg.stack.length && !this.picker.isOpen && contains(rect, mouse.x, mouse.y);
+    const word = usable ? this.source.wordAt(rect, mouse.x, mouse.y) : null;
+    const key = word ? `${word.expr}@${word.line}` : null;
+
+    if(key != this.#hover.key) {
+      this.#hover = { key, since: Date.now(), pending: false };
+      this.tooltip = null;
+      return;
+    }
+
+    if(!key || this.tooltip || this.#hover.pending) return;
+    if(Date.now() - this.#hover.since < 350) return;
+
+    this.#hover.pending = true;
+    const frame = dbg.stack[dbg.currentFrame]?.id ?? 0;
+
+    dbg.session
+      .evaluate(word.expr, frame)
+      .then(body => {
+        if(this.#hover.key == key) this.tooltip = { text: `${word.expr} = ${body?.result ?? body?.value ?? ''}` };
+      })
+      .catch(() => {});
   }
 
   /** Scrollable view whose scrollbar zone is under (x, y), if it can scroll. */
@@ -299,6 +366,11 @@ class GuiApp {
         else if(key == KEY_F10) app.command('next');
         else if(key == KEY_F11) app.command(mods & MOD_SHIFT ? 'finish' : 'step');
         else if(key == 82 /* R */ && mods & MOD_CONTROL) app.command('run');
+        else app.cmdline.handleKey(app, key);
+      },
+
+      handleChar(codepoint) {
+        app.cmdline.handleChar(codepoint);
       },
     });
   }
@@ -332,11 +404,35 @@ class GuiApp {
     this.source.draw(this, (this.content.source = panel(vg, panes.source, this.source.file ?? 'Source')));
     this.stack.draw(this, (this.content.stack = panel(vg, panes.stack, 'Stack')));
     this.varsPane.draw(this, (this.content.vars = panel(vg, panes.vars, 'Variables')));
-    this.console.draw(vg, (this.content.console = panel(vg, panes.console, 'Console')));
+    /* console: scrollback above, the command input line on the bottom row */
+    const consoleContent = panel(vg, panes.console, 'Console');
+    const inputH = metrics.rowH + 4;
+    this.content.console = { ...consoleContent, h: consoleContent.h - inputH };
+    this.console.draw(vg, this.content.console);
+    this.cmdline.draw(vg, { x: consoleContent.x, y: consoleContent.y + consoleContent.h - inputH, w: consoleContent.w, h: inputH });
 
     this.picker.draw(this, panes.source);
 
+    this.#drawTooltip();
+
     vg.EndFrame();
+  }
+
+  #drawTooltip() {
+    if(!this.tooltip) return;
+
+    const { vg, mouse } = this;
+    const { rowH, pad, charW } = metrics;
+
+    const str = this.tooltip.text.length > 160 ? this.tooltip.text.slice(0, 157) + '...' : this.tooltip.text;
+    const w = Math.ceil(str.length * charW) + 2 * pad;
+    const h = rowH + 2 * pad;
+    const x = Math.max(0, Math.min(this.width - w, mouse.x + 12));
+    const y = Math.max(0, Math.min(this.height - h, mouse.y + 16));
+
+    fillRect(vg, x, y, w, h, colors.titleBg);
+    strokeRect(vg, x, y, w, h, colors.border);
+    text(vg, x + pad, y + pad, str, colors.text);
   }
 
   start() {
@@ -347,6 +443,7 @@ class GuiApp {
     if(!this.running || this.window.shouldClose) return this.shutdown();
 
     poll();
+    this.#updateHover();
     this.render();
     this.window.swapBuffers();
 

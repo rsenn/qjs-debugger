@@ -75,6 +75,33 @@ export class SourcePane {
     if(this.#lines) this.#top = Math.max(1, Math.min(this.#lines.length, o + 1));
   }
 
+  /** Hoverable expression under (x, y): an identifier with any dotted prefix. */
+  wordAt(rect, x, y) {
+    if(!this.#lines) return null;
+
+    const { rowH, pad, charW } = metrics;
+    const numW = Math.ceil(String(this.#lines.length).length * charW);
+    const textX = rect.x + GUTTER_DOT + numW + 2 * pad;
+
+    const line = this.#top + Math.floor((y - rect.y - pad) / rowH);
+    if(!(line >= 1 && line <= this.#lines.length)) return null;
+
+    const str = this.#lines[line - 1].replaceAll('\t', '    ');
+    const col = Math.floor((x - textX) / charW);
+    if(!(col >= 0 && col < str.length) || !/[\w$]/.test(str[col])) return null;
+
+    let s = col,
+      e = col;
+    while(s > 0 && /[\w$.]/.test(str[s - 1])) s--;
+    while(e < str.length - 1 && /[\w$]/.test(str[e + 1])) e++;
+
+    const expr = str
+      .slice(s, e + 1)
+      .replace(/^[^A-Za-z_$]+/, '')
+      .replace(/\.$/, '');
+    return /^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(expr) ? { expr, line } : null;
+  }
+
   /** Line number when (x, y) is in the breakpoint gutter, else null. */
   gutterHit(rect, x, y) {
     if(!this.#lines) return null;
