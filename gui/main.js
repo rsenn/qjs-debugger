@@ -15,7 +15,7 @@
 
 import { setTimeout } from 'os';
 import { exit } from 'std';
-import { CONTEXT_VERSION_MAJOR, CONTEXT_VERSION_MINOR, context, KEY_ESCAPE, KEY_F5, KEY_F10, KEY_F11, OPENGL_CORE_PROFILE, OPENGL_FORWARD_COMPAT, OPENGL_PROFILE, poll, RESIZABLE, SAMPLES, Window } from 'glfw';
+import { CONTEXT_VERSION_MAJOR, CONTEXT_VERSION_MINOR, context, createStandardCursor, KEY_ESCAPE, KEY_F5, KEY_F10, KEY_F11, OPENGL_CORE_PROFILE, OPENGL_FORWARD_COMPAT, OPENGL_PROFILE, poll, RESIZABLE, SAMPLES, Window } from 'glfw';
 import { ANTIALIAS, CreateGL3, DeleteGL3, STENCIL_STROKES } from 'nanovg';
 import { colors, metrics, loadFont } from './theme.js';
 import { contains, fillRect, panel, scrollbarHit, scrollbarOffset, strokeRect, text } from './widgets.js';
@@ -37,6 +37,10 @@ const MOD_CONTROL = 2;
 
 const FRAME_MS = 33;
 const SCROLL_LINES = 3;
+const BORDER_GRAB = 4; /* px on either side of a pane border */
+
+/* GLFW standard cursor shapes (the module exports no constants for them) */
+const CURSOR_SHAPES = { arrow: 0x36001, ibeam: 0x36002, hand: 0x36004, hresize: 0x36005, vresize: 0x36006 };
 
 export function StartGUI(dbg) {
   const app = new GuiApp(dbg);
@@ -51,6 +55,8 @@ class GuiApp {
   content = {}; /* panel content rects from the last frame (for hit tests) */
   mouse = { x: 0, y: 0 };
   scrollDrag = null; /* { target, rect } while a scrollbar is held */
+  paneDrag = null; /* 'src' | 'console' | 'stack' | 'vars' while a border is held */
+  splits = { src: 0.6, console: 0.18, stack: 0.35, vars: 0.4 }; /* pane split fractions */
   tooltip = null; /* { text } for the source hover */
   #hover = { key: null, since: 0, pending: false };
   #cmdQueue = [];
@@ -318,8 +324,46 @@ class GuiApp {
     this.font = loadFont(this.vg);
     if(!this.font) this.dbg.print('gui: no usable font found (~/.fonts/MiscFixedSC613.ttf)');
 
+    this.cursors = {};
+    try {
+      for(const [name, shape] of Object.entries(CURSOR_SHAPES)) this.cursors[name] = createStandardCursor(shape);
+    } catch(e) {}
+    this.#cursorShape = 'arrow';
+
     this.layout();
     this.#bindInput();
+  }
+
+  #cursorShape = 'arrow';
+
+  #setCursorShape(name) {
+    if(name == this.#cursorShape || this.cursors[name] == undefined) return;
+    this.#cursorShape = name;
+    this.window.setCursor(this.cursors[name]);
+  }
+
+  /** Pick the pointer shape from what is under the mouse. */
+  #updateCursor() {
+    const { x, y } = this.mouse;
+    const { content, panes } = this;
+    let shape = 'arrow';
+
+    if(this.paneDrag) shape = this.paneDrag == 'src' ? 'hresize' : 'vresize';
+    else if(this.scrollDrag) shape = 'hand';
+    else if(this.picker.isOpen) shape = this.scrollTarget(x, y) || this.picker.fileAt(x, y) ? 'hand' : 'arrow';
+    else if(this.scrollTarget(x, y)) shape = 'hand';
+    else if(this.paneBorderAt(x, y)) shape = this.paneBorderAt(x, y) == 'src' ? 'hresize' : 'vresize';
+    else if(contains(panes.toolbar, x, y)) shape = toolbar.hit(this, panes.toolbar, x, y) ? 'hand' : 'arrow';
+    else if(contains({ ...panes.source, h: metrics.titleH }, x, y)) shape = 'hand';
+    else if(content.source && contains(content.source, x, y)) shape = this.source.gutterHit(content.source, x, y) != null ? 'hand' : 'ibeam';
+    else if(content.stack && contains(content.stack, x, y)) shape = this.stack.rowAt(this, content.stack, x, y) >= 0 ? 'hand' : 'arrow';
+    else if(content.vars && contains(content.vars, x, y)) shape = this.varsPane.rowAt(content.vars, x, y)?.ref > 0 ? 'hand' : 'arrow';
+    else if(content.watches && contains(content.watches, x, y)) {
+      if(contains(this.watches.inputRect(content.watches), x, y)) shape = 'ibeam';
+      else shape = this.watches.rowAt(content.watches, x, y) ? 'hand' : 'arrow';
+    } else if(content.consoleInput && contains(content.consoleInput, x, y)) shape = 'ibeam';
+
+    this.#setCursorShape(shape);
   }
 
   #bindInput() {
@@ -339,6 +383,8 @@ class GuiApp {
           const { target, rect } = app.scrollDrag;
           const { total, visible } = target.scrollInfo;
           target.setScrollOffset(scrollbarOffset(rect, y, total, visible));
+        } else if(app.paneDrag) {
+          app.#dragBorder(x, y);
         }
       },
 
@@ -347,6 +393,7 @@ class GuiApp {
 
         if(action != PRESS) {
           app.scrollDrag = null;
+          app.paneDrag = null;
           return;
         }
 
@@ -360,6 +407,15 @@ class GuiApp {
           scroll.target.setScrollOffset(scrollbarOffset(scroll.rect, y, total, visible));
           app.scrollDrag = scroll;
           return;
+        }
+
+        /* pane borders: start resizing */
+        if(!app.picker.isOpen) {
+          const border = app.paneBorderAt(x, y);
+          if(border) {
+            app.paneDrag = border;
+            return;
+          }
         }
 
         /* modal file picker: a row selects, anything else dismisses */
@@ -428,13 +484,14 @@ class GuiApp {
   }
 
   layout() {
-    const { toolbarH, consoleH } = metrics;
+    const { toolbarH } = metrics;
     const w = this.width;
+    const consoleH = Math.round(this.height * this.splits.console);
     const midY = toolbarH;
     const midH = this.height - toolbarH - consoleH;
-    const srcW = Math.floor(w * 0.6);
-    const stackH = Math.floor(midH * 0.35);
-    const varsH = Math.floor(midH * 0.4);
+    const srcW = Math.floor(w * this.splits.src);
+    const stackH = Math.floor(midH * this.splits.stack);
+    const varsH = Math.floor(midH * this.splits.vars);
 
     this.panes = {
       toolbar: { x: 0, y: 0, w, h: toolbarH },
@@ -444,6 +501,42 @@ class GuiApp {
       watches: { x: srcW, y: midY + stackH + varsH, w: w - srcW, h: midH - stackH - varsH },
       console: { x: 0, y: midY + midH, w, h: consoleH },
     };
+  }
+
+  /** Draggable pane border under (x, y): 'src' | 'console' | 'stack' | 'vars' | null. */
+  paneBorderAt(x, y) {
+    const { source, stack, vars, console: con } = this.panes;
+    const near = (v, target) => Math.abs(v - target) <= BORDER_GRAB;
+
+    if(x >= source.w && y < con.y && near(y, stack.y + stack.h)) return 'stack';
+    if(x >= source.w && y < con.y && near(y, vars.y + vars.h)) return 'vars';
+    if(y >= source.y && y < con.y && near(x, source.w)) return 'src';
+    if(near(y, con.y)) return 'console';
+    return null;
+  }
+
+  /** Move the border held in paneDrag to the pointer, with minimum pane sizes. */
+  #dragBorder(x, y) {
+    const { toolbarH } = metrics;
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const midH = this.height - toolbarH - Math.round(this.height * this.splits.console);
+
+    switch (this.paneDrag) {
+      case 'src':
+        this.splits.src = clamp(x / this.width, 0.15, 0.85);
+        break;
+      case 'console':
+        this.splits.console = clamp((this.height - y) / this.height, 0.06, 0.6);
+        break;
+      case 'stack':
+        this.splits.stack = clamp((y - toolbarH) / midH, 0.08, 0.92 - this.splits.vars);
+        break;
+      case 'vars':
+        this.splits.vars = clamp((y - toolbarH) / midH - this.splits.stack, 0.08, 0.92 - this.splits.stack);
+        break;
+    }
+
+    this.layout();
   }
 
   render() {
@@ -464,7 +557,8 @@ class GuiApp {
     const inputH = metrics.rowH + 4;
     this.content.console = { ...consoleContent, h: consoleContent.h - inputH };
     this.console.draw(vg, this.content.console);
-    this.cmdline.draw(vg, { x: consoleContent.x, y: consoleContent.y + consoleContent.h - inputH, w: consoleContent.w, h: inputH }, this.focusedInput == this.cmdline);
+    this.content.consoleInput = { x: consoleContent.x, y: consoleContent.y + consoleContent.h - inputH, w: consoleContent.w, h: inputH };
+    this.cmdline.draw(vg, this.content.consoleInput, this.focusedInput == this.cmdline);
 
     this.picker.draw(this, panes.source);
 
@@ -499,6 +593,7 @@ class GuiApp {
 
     poll();
     this.#updateHover();
+    this.#updateCursor();
     this.render();
     this.window.swapBuffers();
 

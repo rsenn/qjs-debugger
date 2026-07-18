@@ -21,11 +21,13 @@ const FONT_PATHS = [
 export function loadFont(vg) {
   for(const path of FONT_PATHS)
     if(vg.CreateFont(FONT, path) >= 0) {
-      /* measure the monospace advance; column math everywhere uses it */
+      /* measure the monospace advance; column math everywhere uses it
+         (TextBounds takes exactly (x, y, str, end, bounds) and returns
+         the advance) */
       try {
         vg.FontFace(FONT);
         vg.FontSize(FONT_SIZE);
-        const w = vg.TextBounds(0, 0, 'MMMMMMMMMM');
+        const w = vg.TextBounds(0, 0, 'MMMMMMMMMM', null, {});
         if(w > 0) metrics.charW = w / 10;
       } catch(e) {}
       return path;
