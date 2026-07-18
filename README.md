@@ -35,6 +35,16 @@ drive the engine's built-in debugger protocol over a pluggable transport.
 - **Two install names** — `qjs-debugger` spawns `qjs` as the debuggee,
   `qjsm-debugger` (a symlink) spawns `qjsm`.
 
+![The GUI debugging examples/orbit.js](doc/gui-session.png)
+
+*The GUI mode stopped inside `Body.prototype.advance` of
+[examples/orbit.js](examples/orbit.js): breakpoint set by method name
+from the console's gdb prompt, the stop line highlighted in the
+syntax-colored source, the call stack with the selected frame, `this`
+expanded two levels deep in the variables tree, two watch expressions
+tracking `this.pos.x` and `this.vel.x` across stops, and the program's
+own stdout interleaved with the session log in the console.*
+
 Because the engine-side protocol (`CONFIG_DEBUGGER`, on by default in the
 fork) is compiled into libquickjs, any script or module that runs under
 `qjs`/`qjsm` can be debugged — making this the missing piece for everyday
