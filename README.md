@@ -1,154 +1,162 @@
-# qjs-debugger — decoupled rewrite
+# qjs-debugger
 
-Seven small modules, strict layering. Every class talks to its neighbors
-through a minimal duck-typed contract, never through a concrete import of a
-transport or server library (the only hard qjs-modules dependencies sit in
-`engine-connection.js` and the two connectors, which is exactly where they
-belong).
+A gdb-style source-level debugger for [QuickJS](https://github.com/rsenn/quickjs)
+(rsenn fork), written in JavaScript and running on QuickJS itself. Two
+frontends — an interactive terminal REPL and a native GUI (nanovg/glfw) —
+drive the engine's built-in debugger protocol over a pluggable transport.
 
-```
-codec.js              framing only:   %08x\n + JSON + \n, byte-accurate incremental decoder
-session.js            protocol only:  seqs, pending-request map w/ timeouts, events  (zero imports)
-engine-connection.js  TCP <-> engine: AsyncSocket + FrameDecoder, spawn helper       (qjs only)
-server-adapter.js     N clients <-> 1 engine: seq translation, event fan-out   (zero imports*)
-connector-qjsnet.js   { onConnect, onMessage, onClose, onError } for qjs-net createServer()
-connector-lws.js      { name, callback } protocol entry for qjs-lws LWSContext
-client.js             DebugSession over any WebSocket-shaped transport     (browser + qjs)
-```
+## Features
 
-## The three contracts
+- **gdb-compatible command set** — `run`, `start` (temporary breakpoint on
+  `main()`, falls back to the first top-level statement), `starti`,
+  `continue`, `next`, `step`, `finish`, `backtrace`/`frame`/`up`/`down`,
+  `print`, `display`/`undisplay` (watches), `info
+  breakpoints|locals|stack|frame|display`, `list`, `catch`, `kill`,
+  `set args`, `file`, `--args` on the command line, empty line repeats the
+  last stepping command, unique-prefix command matching and the usual
+  single-letter aliases (`b`, `r`, `c`, `n`, `s`, `p`, `bt`, …).
+- **Breakpoints by location or name** — `file.js:12`, plain line numbers,
+  function names and `Class.prototype.methodName`, resolved by a simple
+  RegExp scan over the primary source and everything it reaches through
+  relative imports (no parser needed).
+- **Tab completion** — debuggee identifiers (locals, closure, globals of
+  the selected frame) for `print`/`display`, source files and scanned
+  function names for `break`.
+- **GUI mode** (`-m gui`) — source pane with the REPL's syntax-highlight
+  colors and a click-to-toggle breakpoint gutter, stack pane with frame
+  selection, lazily expanded (and cycle-safe) variables tree, a watches
+  pane sharing the `display` model, a console with a full gdb command
+  line (completion + history), hover value tooltips, a source file
+  picker, clickable scrollbars, and F5/F10/F11/Shift-F11/Ctrl-R keys.
+- **Transport-agnostic** — `AsyncSocket` from qjs-modules' `sockets`
+  (default) or lws raw TCP streams from qjs-lws (`-t lws`); in both
+  directions: the debugger listens and the engine connects out
+  (default), or the engine listens and the debugger connects (`-c`).
+- **Two install names** — `qjs-debugger` spawns `qjs` as the debuggee,
+  `qjsm-debugger` (a symlink) spawns `qjsm`.
 
-**Transport → DebugSession** (`session.js`): a session is constructed with a
-`send(obj)` function and fed via `session.dispatch(obj)`. That's the whole
-interface — which is why the same class backs the browser client, the REPL
-client and the server adapter.
+Because the engine-side protocol (`CONFIG_DEBUGGER`, on by default in the
+fork) is compiled into libquickjs, any script or module that runs under
+`qjs`/`qjsm` can be debugged — making this the missing piece for everyday
+QuickJS development: set a breakpoint by function name, step through
+module code, inspect locals and closures, watch expressions across stops.
 
-**ClientPort** (consumed by `server-adapter.js`): `{ sendMessage(obj),
-close?() }`. Each connector wraps its native handle (qjs-net `ws`, lws `wsi`)
-into one of these; the adapter never learns which server it's running in.
+## Usage
 
-**EngineConnection** (consumed by `server-adapter.js`): `{ sendMessage(obj),
-onmessage, onclose, close() }`. Want to debug over a serial line or a pipe
-instead of TCP? Implement those four members and `attachEngine()` it.
+    qjs-debugger script.js                  # debug script.js under qjs
+    qjs-debugger --args script.js a b c     # pass arguments to the program
+    qjsm-debugger script.js                 # same, debuggee runs under qjsm
+    qjsm-debugger -m gui script.js          # native GUI instead of the REPL
 
-## Seq spaces (the old design's collision, fixed by construction)
+    -m, --mode MODE       repl | server | gui   (default: repl)
+    -a, --address ADDR    debug address          (default: 127.0.0.1:9901)
+    -l, --listen          listen on ADDR, engine connects out (default)
+    -c, --connect         engine listens on ADDR, debugger connects
+    -t, --transport NAME  socket (AsyncSocket) | lws (TCPSocketStream)
 
-Engine-side seqs are owned exclusively by the adapter's internal
-`DebugSession`. Client seqs never reach the engine: `clientMessage()` issues
-the request through the session (fresh seq), then rewrites `request_seq`
-back to the client's value on the response. The REPL on the server just uses
-`adapter.session` directly — same seq space, no conflict possible.
+A typical REPL session:
 
-## Wiring
+    (qjs-dbg) break Counter.prototype.increment
+    Breakpoint 1 at test.js:11
+    (qjs-dbg) start
+    Temporary breakpoint 2 at test.js:17
+    Temporary breakpoint 2, main () at test.js:17
+    (qjs-dbg) next
+    (qjs-dbg) print c.n + 1
+    $1 = 1
+    (qjs-dbg) display this.n
+    (qjs-dbg) continue
+    Breakpoint 1, increment () at test.js:11
 
-### Server on qjs-net
+In the GUI the same engine/session is driven by clicks: the gutter
+toggles breakpoints, the source pane title opens a file picker for
+setting breakpoints in other sources, stack rows select frames, `+`
+rows expand objects, the watches pane adds/removes expressions, and the
+console's `(qjs-dbg)` prompt accepts every REPL command with completion.
 
-```js
-import { createServer } from 'net';
-import { DebuggerServerAdapter } from './server-adapter.js';
-import { QjsNetConnector } from './connector-qjsnet.js';
-import { EngineConnection, StartEngine } from './engine-connection.js';
+To attach to an engine you started yourself, arm it with the
+environment variable and let the debugger connect:
 
-function main(...args) {
-  const adapter = (globalThis.adapter = new DebuggerServerAdapter({ launch: StartEngine, connect: EngineConnection.connect }));
+    QUICKJS_DEBUG_LISTEN_ADDRESS=127.0.0.1:9901 qjsm myscript.js &
+    qjsm-debugger -c -a 127.0.0.1:9901 myscript.js
 
-  createServer('wss://0.0.0.0:8998/ws', {
-    mounts: [['/', '.', 'debugger.html']],
-    ...QjsNetConnector(adapter),
-  });
+(the reverse direction uses `QUICKJS_DEBUG_ADDRESS` with the debugger
+in its default listening mode).
 
-  /* server-side REPL drives the same engine with the same seq space: */
-  globalThis.dbg = adapter; // adapter.session.next(), .evaluate(...), ...
-}
+## Dependencies
 
-main(...scriptArgs.slice(1));
-```
+| What | Needed for | Notes |
+| --- | --- | --- |
+| [rsenn/quickjs](https://github.com/rsenn/quickjs) | everything | engine with the debugger protocol (`CONFIG_DEBUGGER`, default ON) |
+| qjs-modules (submodule) | everything | `qjsm`, `repl`, `sockets`, `child_process`, `fs`, `path`, … |
+| qjs-glfw + qjs-nanovg (submodules) | `-m gui` | need GLFW 3 and OpenGL development packages |
+| qjs-lws (submodule) | `-t lws` only | vendored libwebsockets |
+| `~/.fonts/MiscFixedSC613.ttf` | `-m gui` | falls back to DejaVu Sans Mono |
+| cmake ≥ 3.9, C compiler | building | |
 
-### Server on qjs-lws
+## Building
 
-```js
-import { LWSContext } from 'lws.so';
-import { DebuggerServerAdapter } from './server-adapter.js';
-import { LWSConnector } from './connector-lws.js';
-import { EngineConnection, StartEngine } from './engine-connection.js';
+Everything lives in the quickjs fork; the subprojects are git
+submodules and build through the top-level CMakeLists:
 
-function main(...args) {
-  const adapter = new DebuggerServerAdapter({ launch: StartEngine, connect: EngineConnection.connect });
+    git clone --recurse-submodules https://github.com/rsenn/quickjs.git
+    cd quickjs
 
-  const ctx = new LWSContext({
-    port: 8998,
-    vhostName: 'localhost',
-    protocols: [LWSConnector(adapter, { name: 'debugger' })],
-  });
+    cmake -B build/native \
+      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DBUILD_SHARED_LIBS=ON \
+      -DMODULE_MODULES=ON \
+      -DMODULE_DEBUGGER=ON \
+      -DMODULE_GLFW=ON -DMODULE_NANOVG=ON     # only needed for -m gui
+      # -DMODULE_LWS=ON                       # only needed for -t lws
 
-  console.log('debugger listening on ws://localhost:8998 (protocol "debugger")');
-}
+    cmake --build build/native -j$(nproc)
+    cmake --install build/native
 
-main(...scriptArgs.slice(1));
-```
+What the pieces produce:
 
-One adapter = one debuggee shared by all clients. For one debuggee per
-connection, pass a factory instead: `QjsNetConnector(ws => new
-DebuggerServerAdapter())` (ditto for LWS).
+- **quickjs** — `libquickjs` and `qjs`, with the debugger protocol
+  compiled in (`CONFIG_DEBUGGER` defaults to ON on native builds; the
+  engine reads `QUICKJS_DEBUG_ADDRESS` / `QUICKJS_DEBUG_LISTEN_ADDRESS`).
+- **qjs-modules** (`MODULE_MODULES`, default ON) — the `qjsm`
+  interpreter, the native modules (`sockets`, `child_process`, …) and
+  the JS library incl. `repl.js`, installed into the module directory.
+- **qjs-debugger** (`MODULE_DEBUGGER`, default ON) — `bin/qjs-debugger`,
+  the `bin/qjsm-debugger` symlink, the support modules
+  (`codec.js`, `session.js`, `transport.js`, `engine-connection.js`)
+  and `bin/gui/` for the GUI mode.
+- **qjs-glfw / qjs-nanovg** (`MODULE_GLFW` / `MODULE_NANOVG`, default
+  OFF) — the `glfw` and `nanovg` modules the GUI imports.
+- **qjs-lws** (`MODULE_LWS`, default OFF) — the `lws.so` stack behind
+  the optional `tcpsocketstream` transport.
 
-### Browser client
+Each subproject also has its own CMakeLists and can be configured
+standalone against an installed quickjs, but the all-in-one build above
+is the supported path.
 
-```js
-import { DebuggerClient } from './client.js';
+## Architecture
 
-const client = await DebuggerClient.connect('wss://' + location.host + '/ws');
+Small modules with strict layering; every class talks to its neighbors
+through a minimal duck-typed contract:
 
-client.on('stopped', ev => console.log('stopped:', ev.reason));
+    codec.js              framing only: %08x\n + JSON + \n, incremental decoder
+    session.js            protocol state machine: seqs, pending requests, events (zero imports)
+    transport.js          byte transports: SocketTransport ('sockets') and
+                          StreamTransport (qjs-lws), each with connect() and accept()
+    engine-connection.js  framed messages over an injected transport; StartEngine()
+                          spawns the debuggee with the debugger armed
+    qjs-debugger.js       the Debugger model + gdb command interpreter + REPL mode
+    gui/                  immediate-mode MVC panes on nanovg/glfw (see gui/PLAN.md)
+    server-adapter.js,    N clients <-> 1 engine fan-out and WebSocket connectors
+    connector-*.js,       for the (stub) server mode and browser clients
+    client.js
 
-await client.start(['test-ecmascript2.js']);          // spawn via the server
-await client.breakpoints('test-ecmascript2.js', [47]); // line numbers ok
-const [event, stack] = await client.continueUntilStopped();
-console.log(await client.variables([0, 1]));           // frame 0, locals
-console.log(await client.evaluate('x + y'));
-await client.next();
-```
-
-### QuickJS REPL client — via the WebSocket server
-
-```js
-import { WebSocketClient } from './lib/async/websocket.js';
-import { DebuggerClient } from './client.js';
-
-const client = await DebuggerClient.connect('wss://localhost:8998/ws', { WebSocket: WebSocketClient });
-```
-
-### QuickJS REPL client — straight to the engine, no server
-
-```js
-import { EngineConnection, StartEngine } from './engine-connection.js';
-
-const { address } = StartEngine(['myscript.js'], '127.0.0.1:9901');
-const conn = await EngineConnection.connect(address);
-const session = conn.attachSession();
-
-await session.stopOnException();
-const [event, stack] = await session.next();
-console.log(stack[0]);
-```
-
-Identical API in all four shapes, because it's the same `DebugSession`
-underneath every time.
-
-## Notes / assumptions to verify against your tree
-
-- `engine-connection.js` imports `spawn` from `'child_process'` with a
-  node-ish `(file, args, { env, stdio })` signature; if your binding's spawn
-  differs, inject your own via `StartEngine(args, addr, { spawn: mySpawn })` —
-  it was made injectable for exactly this reason.
-- `connector-lws.js` defaults LWS_CALLBACK_{ESTABLISHED,CLOSED,RECEIVE} to
-  0/1/6; pass `{ reasons: { ... } }` with the real imported constants if your
-  build exposes them, and `isFinal(wsi)` if you have fragment finality.
-- The `success:false` rejection path in `session.js` assumes the
-  quickjs-debugger.c patch from earlier (error responses for unknown
-  commands); without it, unknown commands fall back to the timeout instead
-  of an immediate rejection — degraded, not broken.
-- Stdout/stderr forwarding of the spawned engine to clients (the old
-  server's `forward()`), the meriyah AST/function-list machinery, and the
-  REPL pretty-printing decorators were intentionally left out of the core;
-  they layer cleanly on top (`adapter.child.stdio`, `adapter.broadcast()`)
-  without touching any of these classes.
+The three load-bearing contracts: a **transport** is
+`{ [Symbol.asyncIterator](), send(data), close() }` with static
+`connect(address, options)` / `accept(address, options)` (accept fires
+`options.listening()` once bound — the engine's outgoing connect does
+not retry); a **DebugSession** is constructed with a `send(obj)`
+function and fed via `dispatch(obj)`; the **Debugger** model is
+headless — output goes through injected `print`/`printRaw` sinks and an
+`onEvent('running'|'stopped'|'exited')` hook, which is how the same
+class backs both the REPL and the GUI.
