@@ -1,16 +1,25 @@
 /**
- * gui/vars-pane.js — variables of the selected frame as an expandable
+ * gui/vars-pane.js — variables of the selected frame as three
+ * collapsible sections (Locals, Closure, Global), each an expandable
  * tree. The app owns all async state; this pane renders and hit-tests:
  *
- *   app.vars          null | 'pending' | [{ name, value, variablesReference }]
- *   app.varChildren   Map(ref -> rows | 'pending')
- *   app.expandedVars  Set(ref)
+ *   app.vars             { local, closure, global }, each:
+ *                         null | 'pending' | [{ name, value, variablesReference }]
+ *   app.varChildren       Map(ref -> rows | 'pending')
+ *   app.expandedVars      Set(ref)
+ *   app.expandedSections  Set('local' | 'closure' | 'global')
  */
 
 import { colors, FONT_SIZE, metrics, syntax } from './theme.js';
 import { scrollbar, text } from './widgets.js';
 
 const INDENT = 2; /* chars per tree level */
+
+const SECTIONS = [
+  ['local', 'Locals'],
+  ['closure', 'Closure'],
+  ['global', 'Global'],
+];
 
 export class VarsPane {
   #scroll = 0;
@@ -34,7 +43,7 @@ export class VarsPane {
     this.#scroll = Math.max(0, o);
   }
 
-  /** Flatten the expanded variable tree into draw rows. */
+  /** Flatten section headers + their expanded variable trees into draw rows. */
   #flatten(app) {
     const rows = [];
 
@@ -55,7 +64,19 @@ export class VarsPane {
       }
     };
 
-    if(Array.isArray(app.vars)) for(const v of app.vars) visit(v, 0, new Set());
+    for(const [section, title] of SECTIONS) {
+      const vars = app.vars[section];
+      const count = Array.isArray(vars) ? vars.length : null;
+      rows.push({ kind: 'section', label: title, count, depth: 0, section });
+
+      if(!app.expandedSections.has(section)) continue;
+
+      if(vars == 'pending') rows.push({ kind: 'info', label: '...', depth: 1, ref: 0 });
+      else if(Array.isArray(vars)) {
+        if(!vars.length) rows.push({ kind: 'info', label: '(none)', depth: 1, ref: 0 });
+        else for(const v of vars) visit(v, 1, new Set());
+      }
+    }
 
     return rows;
   }
@@ -67,14 +88,15 @@ export class VarsPane {
     vg.Save();
     vg.IntersectScissor(rect.x, rect.y, rect.w, rect.h);
 
-    this.#flat = this.#flatten(app);
-
-    if(!this.#flat.length) {
-      const msg = app.vars == 'pending' ? '...' : !dbg.stack.length ? (dbg.child ? '(running)' : '(not stopped)') : '(no locals)';
+    if(!dbg.stack.length) {
+      const msg = dbg.child ? '(running)' : '(not stopped)';
       text(vg, rect.x + pad, rect.y + pad, msg, colors.dim);
+      this.#flat = [];
       vg.Restore();
       return;
     }
+
+    this.#flat = this.#flatten(app);
 
     const rows = Math.max(1, Math.floor((rect.h - pad) / rowH));
     const max = Math.max(0, this.#flat.length - rows);
@@ -85,6 +107,14 @@ export class VarsPane {
     for(let i = this.#scroll; i < this.#flat.length && i < this.#scroll + rows; i++, y += rowH) {
       const r = this.#flat[i];
       let x = rect.x + pad + Math.round(r.depth * INDENT * charW);
+
+      if(r.kind == 'section') {
+        text(vg, x, y, app.expandedSections.has(r.section) ? '-' : '+', syntax.default);
+        x += Math.round(2 * charW);
+        const suffix = r.count == null ? '' : ` (${r.count})`;
+        text(vg, x, y, r.label + suffix, colors.titleFg);
+        continue;
+      }
 
       if(r.kind == 'info') {
         text(vg, x, y, r.label, colors.dim);

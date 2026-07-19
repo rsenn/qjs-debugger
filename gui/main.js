@@ -61,9 +61,11 @@ class GuiApp {
   #hover = { key: null, since: 0, pending: false };
   #cmdQueue = [];
   #cmdBusy = false;
-  vars = null; /* null | 'pending' | [{ name, value, variablesReference }] — locals of the selected frame */
+  /* each: null | 'pending' | [{ name, value, variablesReference }] — selected frame's scopes */
+  vars = { local: null, closure: null, global: null };
   varChildren = new Map(); /* ref -> rows | 'pending' (refs are valid per pause only) */
   expandedVars = new Set();
+  expandedSections = new Set(['local', 'closure']); /* global starts collapsed: dozens of builtins */
   displayValues = []; /* [{ num, expr, value }] evaluated at each stop */
   #varsSeq = 0;
   #dispSeq = 0;
@@ -101,7 +103,7 @@ class GuiApp {
       if(f?.filename) this.source.show(f.filename, f.line);
       this.#refreshVars();
     } else {
-      this.vars = null;
+      this.vars = { local: null, closure: null, global: null };
       this.#varsSeq++;
       this.#dispSeq++;
       this.varChildren.clear();
@@ -111,7 +113,7 @@ class GuiApp {
     }
   }
 
-  /** Fetch the selected frame's locals and displays; panes render 'pending' meanwhile. */
+  /** Fetch the selected frame's locals/closure/global scopes and displays; panes render 'pending' meanwhile. */
   #refreshVars() {
     const { dbg } = this;
 
@@ -121,20 +123,31 @@ class GuiApp {
     this.displayValues = [];
 
     if(!dbg.session || !dbg.stack.length) {
-      this.vars = null;
+      this.vars = { local: null, closure: null, global: null };
       return;
     }
 
     const frame = dbg.stack[dbg.currentFrame]?.id ?? 0;
     const seq = ++this.#varsSeq;
-    this.vars = 'pending';
+    this.vars = { local: 'pending', closure: 'pending', global: 'pending' };
 
-    dbg.session
-      .variables([frame, 1])
-      .then(vars => seq == this.#varsSeq && (this.vars = vars ?? []))
-      .catch(() => seq == this.#varsSeq && (this.vars = []));
+    for(const [section, scope] of [
+      ['local', 1],
+      ['closure', 2],
+      ['global', 0],
+    ])
+      dbg.session
+        .variables([frame, scope])
+        .then(vars => seq == this.#varsSeq && (this.vars[section] = vars ?? []))
+        .catch(() => seq == this.#varsSeq && (this.vars[section] = []));
 
     this.refreshDisplays();
+  }
+
+  toggleSection(name) {
+    if(!name) return;
+    if(this.expandedSections.has(name)) this.expandedSections.delete(name);
+    else this.expandedSections.add(name);
   }
 
   /** Re-evaluate all watch/display expressions in the selected frame. */
@@ -357,7 +370,10 @@ class GuiApp {
     else if(contains({ ...panes.source, h: metrics.titleH }, x, y)) shape = 'hand';
     else if(content.source && contains(content.source, x, y)) shape = this.source.gutterHit(content.source, x, y) != null ? 'hand' : 'ibeam';
     else if(content.stack && contains(content.stack, x, y)) shape = this.stack.rowAt(this, content.stack, x, y) >= 0 ? 'hand' : 'arrow';
-    else if(content.vars && contains(content.vars, x, y)) shape = this.varsPane.rowAt(content.vars, x, y)?.ref > 0 ? 'hand' : 'arrow';
+    else if(content.vars && contains(content.vars, x, y)) {
+      const row = this.varsPane.rowAt(content.vars, x, y);
+      shape = row?.ref > 0 || row?.kind == 'section' ? 'hand' : 'arrow';
+    }
     else if(content.watches && contains(content.watches, x, y)) {
       if(contains(this.watches.inputRect(content.watches), x, y)) shape = 'ibeam';
       else shape = this.watches.rowAt(content.watches, x, y) ? 'hand' : 'arrow';
@@ -441,7 +457,9 @@ class GuiApp {
         } else if(content.stack && contains(content.stack, x, y)) {
           app.selectFrame(app.stack.rowAt(app, content.stack, x, y));
         } else if(content.vars && contains(content.vars, x, y)) {
-          app.toggleVar(app.varsPane.rowAt(content.vars, x, y));
+          const row = app.varsPane.rowAt(content.vars, x, y);
+          if(row?.kind == 'section') app.toggleSection(row.section);
+          else app.toggleVar(row);
         } else if(content.watches && contains(content.watches, x, y)) {
           if(contains(app.watches.inputRect(content.watches), x, y)) {
             app.focusedInput = app.watchInput;
