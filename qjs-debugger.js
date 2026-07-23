@@ -11,18 +11,21 @@
  *   qjs-debugger script.js
  *   qjs-debugger --args script.js arg1 arg2 ...
  */
+import { spawn as spawnProcess } from 'child_process';
 import { readFileSync } from 'fs';
 import * as io from 'io';
 import { clearTimeout as osClearTimeout, read as osRead, setReadHandler, setTimeout as osSetTimeout } from 'os';
 import { basename, dirname, exists, join } from 'path';
 import { REPL } from 'repl';
 import { exit, out as stdout, puts } from 'std';
-import { TextDecoder } from 'textcode';
+import { TextDecoder, TextEncoder } from 'textcode';
 import inspect from 'inspect';
 import process from 'process';
 import Console from 'console';
 import { EngineConnection, StartEngine } from './engine-connection.js';
 import { SocketTransport, StreamTransport } from './transport.js';
+import { DebuggerServerAdapter } from './server-adapter.js';
+import { DAPAdapter } from './vscode-dap.js';
 
 /* ------------------------------------------------------------------ *
  *  source scanning (simple RegExp, no parser)                         *
@@ -1019,6 +1022,194 @@ function StartREPL(dbg) {
 }
 
 /* ------------------------------------------------------------------ *
+ *  server mode — HTTP/WebSocket server (qjs-lws), N clients : 1 engine *
+ * ------------------------------------------------------------------ */
+
+/**
+ * Serve the debug protocol over WebSockets so any number of browser/REPL
+ * clients can share one running engine (see server-adapter.js). Spawns and
+ * owns the engine itself the same way Debugger.launch() does; dbg is used
+ * purely as a config bag here (program/args/address/listen/transport) —
+ * DebuggerServerAdapter, not dbg, is the session owner for this mode.
+ *
+ * Two WS endpoints, both backed by the same DebuggerServerAdapter (and
+ * hence the same single engine) — see connector-lws.js for what each one
+ * puts on the wire:
+ *   port    — one JSON message per WS frame
+ *   port+1  — the engine's own length-framed wire protocol, unmodified
+ *
+ * Separate ports rather than one context with two mounts: this build's
+ * lws mount -> protocol dispatch always resolves to protocols[0]
+ * regardless of which mountpoint matched (see connector-lws.js), so one
+ * context can only serve one protocol correctly.
+ */
+async function StartServer(dbg, { port = 8998 } = {}) {
+  if(!dbg.program) {
+    puts('No executable file specified. Use --args SCRIPT.js or pass it positionally.\n');
+    exit(1);
+  }
+
+  const { createContext } = await import('lws/context.js');
+  const { LWSMPRO_NO_MOUNT } = await import('lws.so');
+  const { LWSConnector } = await import('./connector-lws.js');
+
+  const adapter = new DebuggerServerAdapter({ timeout: 0 });
+  adapter.onstatus = msg => (puts(`[server] ${msg}\n`), stdout.flush());
+
+  /* qjs-lws drives its own event loop once createContext() is running,
+     which collides with forwardOutput's os.setReadHandler-based pipe
+     polling (used by the other modes) — sidestep it by inheriting our
+     own stdout/stderr for the engine child instead of piping them */
+  const spawnEngine = () => {
+    const { child } = StartEngine([dbg.program, ...dbg.programArgs], dbg.address, {
+      listen: !dbg.listen,
+      interpreter: dbg.interpreter,
+      env: process.env,
+      spawn: (file, spawnArgs, opts) => spawnProcess(file, spawnArgs, { ...opts, stdio: 'inherit' }),
+    });
+    return child;
+  };
+
+  /* same accept-vs-connect duality as Debugger.launch(): dbg.listen true
+     means we accept and the engine connects out, false means we spawn it
+     listening and connect to it */
+  const connection = dbg.listen
+    ? await EngineConnection.accept(dbg.address, { transport: dbg.transport, listening: spawnEngine })
+    : (spawnEngine(), await EngineConnection.connect(dbg.address, { transport: dbg.transport }));
+
+  adapter.attachEngine(connection);
+
+  const mount = protocol => [{ mountpoint: '/', protocol, originProtocol: LWSMPRO_NO_MOUNT }];
+
+  createContext({ port, mounts: mount('debugger'), protocols: [{ name: 'debugger', ...LWSConnector(adapter) }] });
+  createContext({ port: port + 1, mounts: mount('debugger-raw'), protocols: [{ name: 'debugger-raw', ...LWSConnector(adapter, { raw: true }) }] });
+
+  puts(`Debugger server: ws://0.0.0.0:${port}/ (JSON) and ws://0.0.0.0:${port + 1}/ (wire protocol, unmodified)\n`);
+  stdout.flush();
+}
+
+/* ------------------------------------------------------------------ *
+ *  dap mode — debug adapter for VS Code                               *
+ * ------------------------------------------------------------------ */
+
+/**
+ * Incremental decoder for the DAP stdio framing:
+ *
+ *     Content-Length: <n>\r\n\r\n<n bytes of JSON>
+ *
+ * Byte-accurate like codec.js's FrameDecoder (the header is pure ASCII,
+ * so scanning for CRLFCRLF is safe even mid multi-byte UTF-8 body).
+ */
+class DAPFrameDecoder {
+  #buf = new Uint8Array(0);
+
+  constructor(onFrame) {
+    this.onFrame = onFrame;
+  }
+
+  push(chunk) {
+    const buf = new Uint8Array(this.#buf.length + chunk.length);
+    buf.set(this.#buf, 0);
+    buf.set(chunk, this.#buf.length);
+    this.#buf = buf;
+
+    for(;;) {
+      let sep = -1;
+      for(let i = 0; i + 3 < this.#buf.length; i++) {
+        if(this.#buf[i] == 13 && this.#buf[i + 1] == 10 && this.#buf[i + 2] == 13 && this.#buf[i + 3] == 10) {
+          sep = i;
+          break;
+        }
+      }
+      if(sep < 0) return;
+
+      const header = new TextDecoder().decode(this.#buf.subarray(0, sep));
+      const m = header.match(/Content-Length:\s*(\d+)/i);
+      if(!m) throw new Error('DAPFrameDecoder: missing Content-Length header');
+
+      const length = +m[1];
+      const bodyStart = sep + 4;
+      if(this.#buf.length < bodyStart + length) return;
+
+      const json = new TextDecoder().decode(this.#buf.subarray(bodyStart, bodyStart + length));
+      this.#buf = this.#buf.subarray(bodyStart + length);
+      this.onFrame(json);
+    }
+  }
+}
+
+/**
+ * Run as a VS Code debug adapter over stdio: DAP requests in on stdin,
+ * DAP responses/events out on stdout, both Content-Length framed. The
+ * engine side is unchanged from the other modes — DAPAdapter (see
+ * vscode-dap.js) is transport-agnostic and just wraps the same
+ * EngineConnection-backed DebugSession that repl/gui use.
+ *
+ * stdout is reserved for the DAP stream: dbg.print/printRaw and console
+ * output are redirected to DAP 'output' events (falling back to stderr
+ * before a session exists) so nothing else can corrupt it.
+ */
+function StartDAP(dbg) {
+  const encoder = new TextEncoder();
+  let seq = 0;
+
+  const send = msg => {
+    const json = JSON.stringify({ seq: ++seq, ...msg });
+    const length = encoder.encode(json).length;
+    puts(`Content-Length: ${length}\r\n\r\n${json}`);
+    stdout.flush();
+  };
+
+  const adapter = new DAPAdapter(send);
+
+  const output = (text, category = 'console') => adapter.event('output', { category, output: text });
+  dbg.print = (...args) => output(args.join(' ') + '\n');
+  dbg.printRaw = s => output(s, 'stdout');
+
+  adapter.onLaunch = adapter.onAttach = async args => {
+    if(args.program) dbg.setProgram(args.program, args.args ?? []);
+    if(args.address) dbg.address = args.address;
+    if(typeof args.listen == 'boolean') dbg.listen = args.listen;
+
+    await dbg.launch();
+    adapter.attachSession(dbg.session);
+  };
+
+  /* breakpoints (setBreakpoints/setExceptionBreakpoints) are only sent by
+     VS Code once launch/attach has responded; resume past the automatic
+     entry stop once they're all in, signaled by configurationDone */
+  adapter.onConfigurationDone = async () => {
+    await dbg.session?.request('continue').catch(() => {});
+  };
+
+  adapter.onDisconnect = adapter.onTerminate = async () => {
+    if(dbg.child) dbg.cmdKill();
+  };
+
+  const decoder = new DAPFrameDecoder(json => {
+    let request;
+    try {
+      request = JSON.parse(json);
+    } catch(e) {
+      return;
+    }
+    adapter.dispatch(request);
+  });
+
+  setReadHandler(0, () => {
+    const buf = new ArrayBuffer(4096);
+    let r;
+    try {
+      r = osRead(0, buf, 0, buf.byteLength);
+    } catch(e) {
+      r = 0;
+    }
+    if(r > 0) decoder.push(new Uint8Array(buf, 0, r));
+    else setReadHandler(0, null);
+  });
+}
+
+/* ------------------------------------------------------------------ *
  *  main                                                               *
  * ------------------------------------------------------------------ */
 
@@ -1026,11 +1217,12 @@ function Usage(name) {
   puts(`Usage: ${name} [OPTIONS] [SCRIPT.js]
        ${name} [OPTIONS] --args SCRIPT.js [ARGS...]
 
-  -m, --mode MODE       repl | server | gui  (default: repl)
+  -m, --mode MODE       repl | server | gui | dap  (default: repl)
   -a, --address ADDR    engine debug address (default: 127.0.0.1:9901)
   -l, --listen          listen on ADDR, engine connects out (default)
   -c, --connect         engine listens on ADDR, debugger connects
   -t, --transport NAME  socket (AsyncSocket) | lws (TCPSocketStream)
+  -p, --port PORT       server mode: WS ports, JSON on PORT, raw wire protocol on PORT+1 (default: 8998)
   -h, --help            show this help
 `);
 }
@@ -1039,9 +1231,6 @@ function main(...args) {
   globalThis.io ??= io; /* AsyncSocket looks its read/write handlers up here */
   globalThis.setTimeout ??= osSetTimeout;
   globalThis.clearTimeout ??= osClearTimeout;
-  globalThis.console = new Console(process.stdout, {
-    inspectOptions: { colors: true, depth: 4, compact: 2, maxArrayLength: 100 },
-  });
 
   const name = basename(process.argv[1] ?? 'qjs-debugger', '.js');
   const interpreter = name.startsWith('qjsm') ? 'qjsm' : 'qjs';
@@ -1050,6 +1239,7 @@ function main(...args) {
     address = '127.0.0.1:9901',
     listen = true,
     transport = SocketTransport,
+    port = 8998,
     program = null,
     programArgs = [];
 
@@ -1063,6 +1253,7 @@ function main(...args) {
       break;
     } else if((m = arg.match(/^(?:-m|--mode)(?:=(.*))?$/))) mode = m[1] ?? args[++i];
     else if((m = arg.match(/^(?:-a|--address)(?:=(.*))?$/))) address = m[1] ?? args[++i];
+    else if((m = arg.match(/^(?:-p|--port)(?:=(.*))?$/))) port = +(m[1] ?? args[++i]);
     else if(arg == '-l' || arg == '--listen') listen = true;
     else if(arg == '-c' || arg == '--connect') listen = false;
     else if((m = arg.match(/^(?:-t|--transport)(?:=(.*))?$/))) {
@@ -1084,6 +1275,11 @@ function main(...args) {
     else programArgs.push(arg);
   }
 
+  /* dap mode reserves stdout for the DAP stream; everything console-ish goes to stderr */
+  globalThis.console = new Console(mode == 'dap' ? process.stderr : process.stdout, {
+    inspectOptions: { colors: true, depth: 4, compact: 2, maxArrayLength: 100 },
+  });
+
   const dbg = new Debugger({ interpreter, address, listen, transport });
   if(program !== null) dbg.setProgram(program, programArgs);
 
@@ -1102,13 +1298,19 @@ function main(...args) {
         });
       break;
 
+    case 'dap':
+      StartDAP(dbg);
+      break;
+
     case 'server':
-      puts(`${name}: mode '${mode}' is not implemented yet.\n`);
-      exit(1);
+      StartServer(dbg, { port }).catch(err => {
+        puts(`${name}: cannot start server: ${err.message}\n`);
+        exit(1);
+      });
       break;
 
     default:
-      puts(`${name}: unknown mode '${mode}' (repl, server, gui)\n`);
+      puts(`${name}: unknown mode '${mode}' (repl, server, gui, dap)\n`);
       exit(1);
   }
 }
