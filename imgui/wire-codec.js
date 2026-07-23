@@ -30,65 +30,6 @@ function toBytes(chunk) {
   throw new TypeError('wire-codec: unsupported chunk type');
 }
 
-export class LengthPrefixedJsonCodec {
-  #buf = new Uint8Array(0);
-
-  get name() {
-    return 'length-prefixed JSON';
-  }
-
-  encode(obj) {
-    const json = JSON.stringify(obj);
-    const len = utf8encode(json).length + 1; /* + trailing newline, see js_transport_write_message_newline() */
-    return ('0000000' + len.toString(16)).slice(-8) + '\n' + json + '\n';
-  }
-
-  feed(chunk) {
-    const add = toBytes(chunk);
-
-    if(add.length) {
-      const merged = new Uint8Array(this.#buf.length + add.length);
-      merged.set(this.#buf, 0);
-      merged.set(add, this.#buf.length);
-      this.#buf = merged;
-    }
-
-    const out = [];
-
-    for(;;) {
-      if(this.#buf.length < 9) break;
-
-      let header = '';
-      for(let i = 0; i < 8; i++) header += String.fromCharCode(this.#buf[i]);
-
-      const len = parseInt(header, 16);
-
-      if(!(len > 0)) {
-        /* resync: skip one byte rather than wedging the stream */
-        this.#buf = this.#buf.subarray(1);
-        continue;
-      }
-
-      if(this.#buf.length < 9 + len) break;
-
-      const body = utf8decode(this.#buf.subarray(9, 9 + len)).replace(/\n+$/, '');
-      this.#buf = this.#buf.slice(9 + len);
-
-      try {
-        out.push(JSON.parse(body));
-      } catch(e) {
-        out.push({ type: 'protocol-error', error: e.message, raw: body });
-      }
-    }
-
-    return out;
-  }
-
-  reset() {
-    this.#buf = new Uint8Array(0);
-  }
-}
-
 export class JsonMessageCodec {
   get name() {
     return 'bare JSON messages';
