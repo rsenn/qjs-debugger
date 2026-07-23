@@ -58,11 +58,12 @@ module code, inspect locals and closures, watch expressions across stops.
     qjsm-debugger script.js                 # same, debuggee runs under qjsm
     qjsm-debugger -m gui script.js          # native GUI instead of the REPL
 
-    -m, --mode MODE       repl | server | gui   (default: repl)
+    -m, --mode MODE       repl | server | gui | dap   (default: repl)
     -a, --address ADDR    debug address          (default: 127.0.0.1:9901)
     -l, --listen          listen on ADDR, engine connects out (default)
     -c, --connect         engine listens on ADDR, debugger connects
     -t, --transport NAME  socket (AsyncSocket) | lws (TCPSocketStream)
+    -p, --port PORT       server mode: WS ports, JSON on PORT, raw on PORT+1
 
 A typical REPL session:
 
@@ -92,6 +93,31 @@ environment variable and let the debugger connect:
 
 (the reverse direction uses `QUICKJS_DEBUG_ADDRESS` with the debugger
 in its default listening mode).
+
+## VS Code extension
+
+This directory is also a self-contained VS Code extension: it registers
+the `qjs` debug type, whose adapter is `qjs-debugger -m dap` itself
+(spawned fresh per debug session, talking DAP over stdio) — no separate
+extension/build step. Load it as an Extension Development Host:
+
+    code --extensionDevelopmentPath="$PWD" /path/to/your/project
+
+or package and install it:
+
+    npx @vscode/vsce package
+    code --install-extension qjs-debugger-*.vsix
+
+"Add Configuration" in `launch.json` offers three targets:
+
+* **QuickJS: Launch** — spawns an engine for `program` and debugs it.
+* **QuickJS: Attach (connect)** — connects to an engine already listening
+  at `address` (`QUICKJS_DEBUG_LISTEN_ADDRESS`); nothing is spawned.
+* **QuickJS: Attach (listen)** — listens at `address` for an engine to
+  connect out (`QUICKJS_DEBUG_ADDRESS`); nothing is spawned.
+
+See `configurationAttributes` in `package.json` for the full set of
+launch/attach fields (`interpreter`, `cwd`, `transport`, `stopOnEntry`, …).
 
 ## Dependencies
 

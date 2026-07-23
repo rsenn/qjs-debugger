@@ -1,0 +1,10 @@
+.claude/**
+build/**
+examples/**
+doc/**
+imgui/**
+*.log
+*.out
+*.sublime-*
+.gitignore
+.vscodeignore

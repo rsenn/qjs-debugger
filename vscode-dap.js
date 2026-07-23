@@ -58,11 +58,21 @@ export class DAPAdapter {
   attachSession(session) {
     this.#session = session;
 
+    /* both the engine's own 'terminated' message and the connection
+       closing (session 'aborted') signal the same thing to DAP — send it
+       at most once */
+    let terminated = false;
+    const sendTerminated = () => {
+      if(terminated) return;
+      terminated = true;
+      this.event('terminated', {});
+    };
+
     session.on('stopped', ev => {
       if(ev.reason != 'entry') this.event('stopped', { reason: ev.reason, threadId: this.#threadId, description: ev.description, text: ev.text });
     });
-    session.on('terminated', () => this.event('terminated', {}));
-    session.on('aborted', () => this.event('terminated', {}));
+    session.on('terminated', sendTerminated);
+    session.on('aborted', sendTerminated);
     return this;
   }
 

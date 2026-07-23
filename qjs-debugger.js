@@ -132,6 +132,7 @@ export class Debugger {
     this.address = address;
     this.listen = listen; /* true: we accept, engine connects out; false: engine listens, we connect */
     this.transport = transport;
+    this.cwd = null; /* engine child's working directory; null: inherit ours */
   }
 
   setProgram(file, args = []) {
@@ -280,6 +281,7 @@ export class Debugger {
         listen: !this.listen,
         interpreter: this.interpreter,
         env: process.env,
+        cwd: this.cwd ?? undefined,
       });
       this.child = child;
 
@@ -1065,6 +1067,7 @@ async function StartServer(dbg, { port = 8998 } = {}) {
       listen: !dbg.listen,
       interpreter: dbg.interpreter,
       env: process.env,
+      cwd: dbg.cwd ?? undefined,
       spawn: (file, spawnArgs, opts) => spawnProcess(file, spawnArgs, { ...opts, stdio: 'inherit' }),
     });
     return child;
@@ -1166,24 +1169,53 @@ function StartDAP(dbg) {
   dbg.print = (...args) => output(args.join(' ') + '\n');
   dbg.printRaw = s => output(s, 'stdout');
 
-  adapter.onLaunch = adapter.onAttach = async args => {
-    if(args.program) dbg.setProgram(args.program, args.args ?? []);
-    if(args.address) dbg.address = args.address;
-    if(typeof args.listen == 'boolean') dbg.listen = args.listen;
+  let stopOnEntry = false;
 
+  const configure = (args, defaultListen) => {
+    if(args.address) dbg.address = args.address;
+    dbg.listen = typeof args.listen == 'boolean' ? args.listen : defaultListen;
+    if(args.interpreter) dbg.interpreter = args.interpreter;
+    if(args.cwd) dbg.cwd = args.cwd;
+    stopOnEntry = !!args.stopOnEntry;
+  };
+
+  /* launch: spawn a fresh engine for `program` (dbg.launch(), same as the
+     other modes) — listen defaults true (we accept, engine connects out) */
+  adapter.onLaunch = async args => {
+    if(!args.program) throw new Error("launch requires 'program'");
+    configure(args, true);
+    dbg.setProgram(args.program, args.args ?? []);
     await dbg.launch();
+    adapter.attachSession(dbg.session);
+  };
+
+  /* attach: connect to (or accept from) an already-running engine at
+     `address` — never spawns anything, unlike dbg.launch(); listen
+     defaults false ("connect": the engine is already listening) */
+  adapter.onAttach = async args => {
+    configure(args, false);
+    if(!dbg.address) throw new Error("attach requires 'address'");
+
+    dbg.connection = dbg.listen
+      ? await EngineConnection.accept(dbg.address, { transport: dbg.transport })
+      : await EngineConnection.connect(dbg.address, { transport: dbg.transport });
+
+    dbg.session = dbg.connection.attachSession({ timeout: 0 });
+    await dbg.session.waitEvent('stopped'); /* the engine stops at 'entry' as soon as it attaches */
     adapter.attachSession(dbg.session);
   };
 
   /* breakpoints (setBreakpoints/setExceptionBreakpoints) are only sent by
      VS Code once launch/attach has responded; resume past the automatic
-     entry stop once they're all in, signaled by configurationDone */
+     entry stop once they're all in, signaled by configurationDone —
+     unless the launch/attach config asked to stay stopped */
   adapter.onConfigurationDone = async () => {
-    await dbg.session?.request('continue').catch(() => {});
+    if(!stopOnEntry) await dbg.session?.request('continue').catch(() => {});
   };
 
   adapter.onDisconnect = adapter.onTerminate = async () => {
     if(dbg.child) dbg.cmdKill();
+    else dbg.connection?.close();
   };
 
   const decoder = new DAPFrameDecoder(json => {

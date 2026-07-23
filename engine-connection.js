@@ -118,12 +118,13 @@ export class EngineConnection {
  * The spawn function is injectable for environments where 'child_process'
  * spawn signatures differ — pass options.spawn(file, args, opts).
  */
-export function StartEngine(args, address = '127.0.0.1:9901', { listen = true, interpreter = 'qjsm', env = {}, spawn: doSpawn = spawn } = {}) {
+export function StartEngine(args, address = '127.0.0.1:9901', { listen = true, interpreter = 'qjsm', env = {}, cwd, spawn: doSpawn = spawn } = {}) {
   const childEnv = { ...env };
   childEnv[listen ? 'QUICKJS_DEBUG_LISTEN_ADDRESS' : 'QUICKJS_DEBUG_ADDRESS'] = address;
 
   const child = doSpawn(interpreter, args, {
     env: childEnv,
+    cwd,
     stdio: ['inherit', 'pipe', 'pipe'],
   });
   return { child, address, args };

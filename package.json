@@ -1,0 +1,190 @@
+{
+  "name": "qjs-debugger",
+  "displayName": "QuickJS Debugger (native)",
+  "description": "Debug QuickJS scripts via qjs-debugger's own DAP adapter (qjs-debugger -m dap) — launch, attach/connect, attach/listen.",
+  "version": "0.1.0",
+  "publisher": "rsenn",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rsenn/qjs-debugger.git"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Debuggers"
+  ],
+  "activationEvents": [
+    "onDebug"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "debuggers": [
+      {
+        "type": "qjs",
+        "label": "QuickJS Debug (native)",
+        "languages": [
+          "javascript"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to the script to debug.",
+                "default": "${workspaceFolder}/main.js"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments passed to the debuggee.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the spawned engine.",
+                "default": "${workspaceFolder}"
+              },
+              "interpreter": {
+                "type": "string",
+                "enum": [
+                  "qjs",
+                  "qjsm"
+                ],
+                "description": "Interpreter the engine runs the debuggee under.",
+                "default": "qjsm"
+              },
+              "runtimeExecutable": {
+                "type": "string",
+                "description": "Interpreter that hosts the DAP adapter itself (qjs-debugger.js). Defaults to 'qjsm' on PATH.",
+                "default": "qjsm"
+              },
+              "address": {
+                "type": "string",
+                "description": "host:port for the engine's debug socket.",
+                "default": "127.0.0.1:9901"
+              },
+              "listen": {
+                "type": "boolean",
+                "description": "true: we accept the connection and the engine connects out (default). false: spawn the engine listening and connect to it.",
+                "default": true
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "socket",
+                  "lws"
+                ],
+                "description": "socket: AsyncSocket (qjs-modules). lws: TCPSocketStream (qjs-lws).",
+                "default": "socket"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stay stopped at the engine's automatic entry breakpoint instead of resuming once configuration is done.",
+                "default": false
+              }
+            }
+          },
+          "attach": {
+            "required": [
+              "address"
+            ],
+            "properties": {
+              "address": {
+                "type": "string",
+                "description": "host:port of the already-running engine's debug socket.",
+                "default": "127.0.0.1:9901"
+              },
+              "listen": {
+                "type": "boolean",
+                "description": "false (\"connect\", default): the engine is already listening, we connect out to it. true (\"listen\"): we listen and the engine connects out to us.",
+                "default": false
+              },
+              "runtimeExecutable": {
+                "type": "string",
+                "description": "Interpreter that hosts the DAP adapter itself (qjs-debugger.js). Defaults to 'qjsm' on PATH.",
+                "default": "qjsm"
+              },
+              "transport": {
+                "type": "string",
+                "enum": [
+                  "socket",
+                  "lws"
+                ],
+                "default": "socket"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": false
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "qjs",
+            "request": "launch",
+            "name": "QuickJS: Launch",
+            "program": "${workspaceFolder}/main.js",
+            "interpreter": "qjsm"
+          },
+          {
+            "type": "qjs",
+            "request": "attach",
+            "name": "QuickJS: Attach (connect)",
+            "address": "127.0.0.1:9901",
+            "listen": false
+          },
+          {
+            "type": "qjs",
+            "request": "attach",
+            "name": "QuickJS: Attach (listen)",
+            "address": "127.0.0.1:9901",
+            "listen": true
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "QuickJS: Launch",
+            "description": "Spawn an engine for a script and debug it.",
+            "body": {
+              "type": "qjs",
+              "request": "launch",
+              "name": "QuickJS: Launch",
+              "program": "${workspaceFolder}/${1:main.js}",
+              "interpreter": "qjsm"
+            }
+          },
+          {
+            "label": "QuickJS: Attach (connect)",
+            "description": "Connect to an engine already listening at address:port (QUICKJS_DEBUG_LISTEN_ADDRESS).",
+            "body": {
+              "type": "qjs",
+              "request": "attach",
+              "name": "QuickJS: Attach (connect)",
+              "address": "${2:127.0.0.1:9901}",
+              "listen": false
+            }
+          },
+          {
+            "label": "QuickJS: Attach (listen)",
+            "description": "Listen at address:port for an engine to connect out (QUICKJS_DEBUG_ADDRESS).",
+            "body": {
+              "type": "qjs",
+              "request": "attach",
+              "name": "QuickJS: Attach (listen)",
+              "address": "${3:127.0.0.1:9901}",
+              "listen": true
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
