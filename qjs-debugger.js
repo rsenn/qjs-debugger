@@ -122,7 +122,7 @@ export class Debugger {
   #closed = null;
 
   print = (...args) => console.log(...args);
-  printRaw = s => (puts(s), stdout.flush());
+  printRaw = s => (stdout.puts(s), stdout.flush());
   onEvent = null; /* (kind: 'running' | 'stopped' | 'exited') => {} — for GUI views */
   echoSourceLine = true; /* print the stopped-at source line (off in GUI: the source pane shows it) */
   echoDisplays = true; /* print auto-displays at every stop (off in GUI: the watches pane shows them) */
@@ -960,7 +960,7 @@ function StartREPL(dbg) {
   console.log = repl.printFunction(log);
 
   dbg.print = (...args) => repl.printStatus(args.join(' '), false);
-  dbg.printRaw = repl.printFunction(s => (puts(s), stdout.flush()));
+  dbg.printRaw = repl.printFunction(s => (stdout.puts(s), stdout.flush()));
 
   /* gdb command interpreter instead of JS evaluation; '\' keeps REPL directives.
      Commands run asynchronously: lines entered meanwhile are queued. */
@@ -1029,21 +1029,36 @@ function StartREPL(dbg) {
 
 /**
  * Serve the debug protocol over WebSockets so any number of browser/REPL
- * clients can share one running engine (see server-adapter.js). Spawns and
- * owns the engine itself the same way Debugger.launch() does; dbg is used
- * purely as a config bag here (program/args/address/listen/transport) —
- * DebuggerServerAdapter, not dbg, is the session owner for this mode.
+ * clients can share one running engine (see server-adapter.js). dbg is
+ * used purely as a config bag here (program/args/address/listen/transport)
+ * — DebuggerServerAdapter, not dbg, is the session owner for this mode.
  *
- * Two WS endpoints, both backed by the same DebuggerServerAdapter (and
- * hence the same single engine) — see connector-lws.js for what each one
- * puts on the wire:
- *   port    — one JSON message per WS frame
- *   port+1  — the engine's own length-framed wire protocol, unmodified
- *
- * Separate ports rather than one context with two mounts: this build's
- * lws mount -> protocol dispatch always resolves to protocols[0]
- * regardless of which mountpoint matched (see connector-lws.js), so one
- * context can only serve one protocol correctly.
+ * One port, one LWSContext, all backed by the same DebuggerServerAdapter
+ * (and hence the same single engine):
+ *   - JSON and the engine's own length-framed wire protocol, both as WS,
+ *     sharing the port: which one a client gets is purely which
+ *     Sec-WebSocket-Protocol it asks for — `new WebSocket(url, 'debugger')`
+ *     (one JSON message per WS frame) vs `new WebSocket(url,
+ *     'debugger-raw')` (unmodified `%08x\n<json>\n` framing) —
+ *     libwebsockets matches that name against every protocol on the vhost
+ *     regardless of which mount matched the URL (see connector-lws.js's
+ *     header comment), so no separate mount is needed per encoding.
+ *   - qjs-lws's examples/debugger/demo.html UI: static files, GET
+ *     /source?path=... for absolute-path sources, and the WS 'browser'
+ *     protocol at /debug demo.js expects.
+ *   - when dbg.listen (true, default), the engine's own connection: lws's
+ *     listen-fallback (LWS_SERVER_OPTION_FALLBACK_TO_APPLY_LISTEN_ACCEPT_CONFIG
+ *     + listenAcceptRole/listenAcceptProtocol) lets the same port both
+ *     serve HTTP/WS *and* accept the engine's raw, non-HTTP TCP connection
+ *     (armed with QUICKJS_DEBUG_ADDRESS=host:port) by sniffing whether the
+ *     first bytes look like an HTTP request line — see connector-lws.js's
+ *     LWSEngineConnector. This sidesteps forwardOutput's os.setReadHandler
+ *     pipe polling colliding with qjs-lws's own event loop (see BUGS) by
+ *     keeping the engine spawn+output capture on lws-native primitives too
+ *     (SubprocessStream), rather than qjs-modules' AsyncSocket. dbg.listen
+ *     = false (engine listens, we connect out) isn't part of that demo —
+ *     it keeps using the plain EngineConnection.connect() path, dialing
+ *     out to dbg.address rather than accepting on `port`.
  */
 async function StartServer(dbg, { port = 8998 } = {}) {
   if(!dbg.program) {
@@ -1051,44 +1066,105 @@ async function StartServer(dbg, { port = 8998 } = {}) {
     exit(1);
   }
 
-  const { createContext } = await import('lws/context.js');
-  const { LWSMPRO_NO_MOUNT } = await import('lws.so');
-  const { LWSConnector } = await import('./connector-lws.js');
+  const { createServer, LWSMPRO_NO_MOUNT, LWSMPRO_FILE, LWSMPRO_CALLBACK, LWS_WRITE_HTTP_FINAL, LWS_SERVER_OPTION_FALLBACK_TO_APPLY_LISTEN_ACCEPT_CONFIG } = await import('lws.so');
+  const { LWSConnector, LWSEngineConnector } = await import('./connector-lws.js');
 
   const adapter = new DebuggerServerAdapter({ timeout: 0 });
-  adapter.onstatus = msg => (puts(`[server] ${msg}\n`), stdout.flush());
+  adapter.onstatus = msg => (stdout.puts(`[server] ${msg}\n`), stdout.flush());
 
-  /* qjs-lws drives its own event loop once createContext() is running,
-     which collides with forwardOutput's os.setReadHandler-based pipe
-     polling (used by the other modes) — sidestep it by inheriting our
-     own stdout/stderr for the engine child instead of piping them */
-  const spawnEngine = () => {
-    const { child } = StartEngine([dbg.program, ...dbg.programArgs], dbg.address, {
-      listen: !dbg.listen,
-      interpreter: dbg.interpreter,
-      env: process.env,
-      cwd: dbg.cwd ?? undefined,
-      spawn: (file, spawnArgs, opts) => spawnProcess(file, spawnArgs, { ...opts, stdio: 'inherit' }),
+  /* demo.js connects with `new WebSocket(url, 'browser')` — an explicit
+     Sec-WebSocket-Protocol header, required for mount-based dispatch to
+     work correctly on a context that also serves other protocols (see
+     connector-lws.js's header comment) — so name it to match. */
+  const browserConnector = LWSConnector(adapter, { mode: 'browser', name: 'browser' });
+  const demoDir = join(dirname(process.argv[1] ?? '.'), 'examples', 'browser');
+
+  /* GET /source?path=<abs>, for stack frames outside demoDir (our targets
+     are always given as absolute paths) — same as qjs-lws's own
+     examples/debugger/server.js. */
+  function serveSource(wsi) {
+    const m = (wsi.headers?.['uri-args'] ?? '').match(/(?:^|&)path=([^&]*)/);
+    const path = m ? decodeURIComponent(m[1]) : null;
+
+    if(!path || !path.endsWith('.js')) {
+      wsi.respond(400, { 'content-type': 'text/plain' });
+      wsi.write('bad request: missing or non-.js path\n', LWS_WRITE_HTTP_FINAL);
+      return;
+    }
+
+    let content;
+    try {
+      content = readFileSync(path, 'utf-8');
+    } catch(e) {
+      wsi.respond(404, { 'content-type': 'text/plain' });
+      wsi.write('not found\n', LWS_WRITE_HTTP_FINAL);
+      return;
+    }
+
+    wsi.respond(200, { 'content-type': 'text/javascript' }, content.length);
+    wsi.write(content, LWS_WRITE_HTTP_FINAL);
+  }
+
+  const browserMounts = [
+    { mountpoint: '/debug', protocol: 'browser', originProtocol: LWSMPRO_NO_MOUNT },
+    { mountpoint: '/source', protocol: 'source', originProtocol: LWSMPRO_CALLBACK },
+    { mountpoint: '/', origin: demoDir, def: 'demo.html', originProtocol: LWSMPRO_FILE, protocol: 'http' },
+  ];
+  const protocols = [
+    LWSConnector(adapter, { mode: 'json', name: 'debugger' }),
+    LWSConnector(adapter, { mode: 'raw', name: 'debugger-raw' }),
+    { name: 'http' },
+    { name: 'source', onHttp: serveSource },
+    browserConnector,
+  ];
+
+  if(dbg.listen) {
+    const { SubprocessStream } = await import('lws/subprocess-stream.js');
+
+    createServer({
+      port,
+      vhostName: 'localhost',
+      options: LWS_SERVER_OPTION_FALLBACK_TO_APPLY_LISTEN_ACCEPT_CONFIG,
+      listenAcceptRole: 'raw-skt',
+      listenAcceptProtocol: 'engine',
+      mounts: browserMounts,
+      protocols: [...protocols, { name: 'engine', ...LWSEngineConnector({ onConnect: connection => adapter.attachEngine(connection) }) }],
     });
-    return child;
-  };
 
-  /* same accept-vs-connect duality as Debugger.launch(): dbg.listen true
-     means we accept and the engine connects out, false means we spawn it
-     listening and connect to it */
-  const connection = dbg.listen
-    ? await EngineConnection.accept(dbg.address, { transport: dbg.transport, listening: spawnEngine })
-    : (spawnEngine(), await EngineConnection.connect(dbg.address, { transport: dbg.transport }));
+    const child = SubprocessStream(['/usr/bin/env', `QUICKJS_DEBUG_ADDRESS=127.0.0.1:${port}`, dbg.interpreter, dbg.program, ...dbg.programArgs]);
+    pumpOutput(child.stdout, 1, browserConnector);
+    pumpOutput(child.stderr, 2, browserConnector);
+  } else {
+    spawnProcess(dbg.interpreter, [dbg.program, ...dbg.programArgs], {
+      env: { ...process.env, QUICKJS_DEBUG_LISTEN_ADDRESS: dbg.address },
+      cwd: dbg.cwd ?? undefined,
+      stdio: 'inherit',
+    });
+    const connection = await EngineConnection.connect(dbg.address, { transport: dbg.transport });
+    adapter.attachEngine(connection);
 
-  adapter.attachEngine(connection);
+    createServer({ port, vhostName: 'localhost', mounts: browserMounts, protocols });
+  }
 
-  const mount = protocol => [{ mountpoint: '/', protocol, originProtocol: LWSMPRO_NO_MOUNT }];
-
-  createContext({ port, mounts: mount('debugger'), protocols: [{ name: 'debugger', ...LWSConnector(adapter) }] });
-  createContext({ port: port + 1, mounts: mount('debugger-raw'), protocols: [{ name: 'debugger-raw', ...LWSConnector(adapter, { raw: true }) }] });
-
-  puts(`Debugger server: ws://0.0.0.0:${port}/ (JSON) and ws://0.0.0.0:${port + 1}/ (wire protocol, unmodified)\n`);
+  stdout.puts(`Debugger server: http://0.0.0.0:${port}/ (browser demo), ws://0.0.0.0:${port}/ ('debugger' subprotocol: JSON, 'debugger-raw': wire protocol)\n`);
   stdout.flush();
+}
+
+/* Forwards one of the debuggee's output streams to every connected
+   'browser'-mode WS client as a channel-prefixed binary message
+   (1 = stdout, 2 = stderr) — see qjs-lws's examples/debugger/demo.js. */
+async function pumpOutput(stream, channel, connector) {
+  const reader = stream.getReader();
+
+  for(;;) {
+    const { value, done } = await reader.read();
+    if(done) break;
+
+    const framed = new Uint8Array(1 + value.byteLength);
+    framed[0] = channel;
+    framed.set(new Uint8Array(value), 1);
+    connector.broadcastBinary(framed.buffer);
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -1159,7 +1235,7 @@ function StartDAP(dbg) {
   const send = msg => {
     const json = JSON.stringify({ seq: ++seq, ...msg });
     const length = encoder.encode(json).length;
-    puts(`Content-Length: ${length}\r\n\r\n${json}`);
+    stdout.puts(`Content-Length: ${length}\r\n\r\n${json}`);
     stdout.flush();
   };
 
@@ -1254,7 +1330,9 @@ function Usage(name) {
   -l, --listen          listen on ADDR, engine connects out (default)
   -c, --connect         engine listens on ADDR, debugger connects
   -t, --transport NAME  socket (AsyncSocket) | lws (TCPSocketStream)
-  -p, --port PORT       server mode: WS ports, JSON on PORT, raw wire protocol on PORT+1 (default: 8998)
+  -p, --port PORT       server mode: HTTP, WS ('debugger' subprotocol: JSON,
+                        'debugger-raw': wire protocol) and the engine's TCP
+                        connection all share PORT (default: 8998)
   -h, --help            show this help
 `);
 }

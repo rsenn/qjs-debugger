@@ -63,7 +63,9 @@ module code, inspect locals and closures, watch expressions across stops.
     -l, --listen          listen on ADDR, engine connects out (default)
     -c, --connect         engine listens on ADDR, debugger connects
     -t, --transport NAME  socket (AsyncSocket) | lws (TCPSocketStream)
-    -p, --port PORT       server mode: WS ports, JSON on PORT, raw on PORT+1
+    -p, --port PORT       server mode: HTTP, WS ('debugger' subprotocol: JSON,
+                          'debugger-raw': wire protocol) and the engine's TCP
+                          connection all share PORT (default: 8998)
 
 A typical REPL session:
 
@@ -93,6 +95,15 @@ environment variable and let the debugger connect:
 
 (the reverse direction uses `QUICKJS_DEBUG_ADDRESS` with the debugger
 in its default listening mode).
+
+`server` mode serves qjs-lws's
+[examples/debugger](https://github.com/rsenn/qjs-lws) browser UI
+(copied to `examples/browser/`) — no separate server needed, and no
+changes to `demo.html`/`demo.js`. HTTP, WS and the engine's own TCP
+connection all share the one port:
+
+    qjs-debugger -m server script.js
+    # then open http://localhost:8998/ (default port)
 
 ## VS Code extension
 

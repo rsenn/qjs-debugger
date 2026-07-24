@@ -31,7 +31,7 @@ Running:
 ```
 qjs-debugger script.js                  # REPL, spawns qjs as debuggee
 qjsm-debugger -m gui script.js          # native GUI, spawns qjsm
-qjs-debugger -m server script.js        # WS server + browser UI on PORT+1
+qjs-debugger -m server script.js        # HTTP + WS + engine TCP, all on one port
 qjs-debugger -m dap                     # DAP adapter over stdio (VS Code spawns this)
 ```
 

@@ -24,3 +24,7 @@ install(FILES codec.js session.js engine-connection.js transport.js server-adapt
 install(FILES gui/main.js gui/theme.js gui/widgets.js gui/toolbar.js gui/source-pane.js gui/console-pane.js
               gui/stack-pane.js gui/vars-pane.js gui/file-picker.js gui/command-line.js gui/watch-pane.js
         DESTINATION bin/gui)
+
+# server mode's browser UI (qjs-lws examples/debugger/demo.{html,js}, served
+# statically at path 'examples/browser' relative to the installed script)
+install(FILES examples/browser/demo.html examples/browser/demo.js DESTINATION bin/examples/browser)

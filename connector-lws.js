@@ -1,56 +1,90 @@
 /**
- * connector-lws.js — plugs a DebuggerServerAdapter into qjs-lws.
+ * connector-lws.js — plugs a DebuggerServerAdapter (and a raw engine
+ * connection) into qjs-lws.
  *
- * qjs-lws (lws.so / lws/context.js) dispatches per-protocol callbacks as
- * named methods on the protocol descriptor (onEstablished, onReceive,
- * onClosed, ...), not the classic numeric-reason `callback(wsi, reason,
- * user, buf)` switch — this connector produces one such descriptor:
+ * qjs-lws (lws.so) dispatches per-protocol callbacks as named methods on
+ * the protocol descriptor (onEstablished, onReceive, onClosed, onRawAdopt,
+ * ...), not the classic numeric-reason `callback(wsi, reason, user, buf)`
+ * switch. Two connectors live here:
  *
- *     import { createContext } from 'lws/context.js';
- *     import { LWSMPRO_NO_MOUNT } from 'lws.so';
- *     import { DebuggerServerAdapter } from './server-adapter.js';
- *     import { LWSConnector } from './connector-lws.js';
+ *   LWSConnector(adapter, { mode })
+ *     A WS protocol descriptor: wraps each wsi into a ClientPort, shovels
+ *     messages, knows nothing about the debug protocol itself.
  *
- *     const adapter = new DebuggerServerAdapter();
+ *         import { createServer } from 'lws.so';
+ *         import { DebuggerServerAdapter } from './server-adapter.js';
+ *         import { LWSConnector } from './connector-lws.js';
  *
- *     const ctx = createContext({
- *       port: 8998,
- *       mounts: [{ mountpoint: '/ws', protocol: 'debugger', originProtocol: LWSMPRO_NO_MOUNT }],
- *       protocols: [{ name: 'debugger', ...LWSConnector(adapter) }],
- *     });
+ *         const adapter = new DebuggerServerAdapter();
  *
- * Same contract as the qjs-net connector: wraps each wsi into a ClientPort,
- * shovels messages, knows nothing about the debug protocol itself. Two wire
- * encodings, picked with `{ raw }`:
+ *         createServer({
+ *           port: 8998,
+ *           mounts: [{ mountpoint: '/', protocol: 'debugger', originProtocol: LWSMPRO_NO_MOUNT }],
+ *           protocols: [{ name: 'debugger', ...LWSConnector(adapter) }],
+ *         });
  *
- *   - raw: false (default) — one JSON document per WS frame, no length
- *     framing (WS's own frame boundary replaces it). Frames may arrive
- *     fragmented (WS_WRITE with the FIN bit deferred, or plain TCP
- *     coalescing under lws); partial text is buffered until it parses.
- *   - raw: true — the exact quickjs-debugger wire framing (see codec.js:
- *     `%08x\n<json>\n`) carried unmodified inside WS frames, for clients
- *     that want to speak the engine's native protocol instead of a
- *     WS-per-message convention. Multiple raw frames may share one WS
- *     message or split across several; FrameDecoder handles both.
+ *     Three wire encodings, picked with `mode`:
+ *       'json'    (default) — one JSON document per WS frame both ways, no
+ *                  length framing (WS's own frame boundary replaces it).
+ *                  Frames may arrive fragmented; partial text is buffered
+ *                  until it parses.
+ *       'raw'     — the exact quickjs-debugger wire framing (see codec.js:
+ *                  `%08x\n<json>\n`) carried unmodified inside WS frames
+ *                  both ways, for clients that speak the engine's native
+ *                  protocol instead of a WS-per-message convention.
+ *       'browser' — asymmetric: bare JSON in (client -> server), the same
+ *                  length-prefixed framing as 'raw' out (server -> client).
+ *                  Matches qjs-lws's examples/debugger/demo.js verbatim —
+ *                  large outgoing frames (a big variable listing) can
+ *                  otherwise land as several separate WS messages, so
+ *                  demo.js reassembles them the same way the raw TCP side
+ *                  is framed rather than trusting WS message boundaries;
+ *                  small client->server commands don't need that.
+ *     All three talk to the very same DebuggerServerAdapter (and thus the
+ *     very same, single, shared engine connection) through the identical
+ *     ClientPort/clientMessage() contract — only the bytes-on-the-wire
+ *     differ. The returned descriptor also exposes broadcastBinary(bytes)
+ *     to push a raw binary WS message (e.g. a debuggee output channel) to
+ *     every currently-attached wsi, bypassing the adapter entirely.
  *
- * Both encodings talk to the very same DebuggerServerAdapter (and thus the
- * very same, single, shared engine connection) through the identical
- * ClientPort/clientMessage() contract — only the bytes-on-the-wire differ.
+ *   LWSEngineConnector({ onConnect })
+ *     A RAW-role protocol descriptor (onRawAdopt/onRawRx/onRawClose) for
+ *     accepting the debug target's own TCP connection on an lws-managed
+ *     listener instead of a qjs-modules Socket — the "listen-fallback"
+ *     mount: LWS_SERVER_OPTION_FALLBACK_TO_APPLY_LISTEN_ACCEPT_CONFIG lets
+ *     one port serve HTTP/WS *and* accept a raw, non-HTTP connection (the
+ *     debug target arming itself with QUICKJS_DEBUG_ADDRESS) by sniffing
+ *     whether the first bytes look like an HTTP request line. onConnect
+ *     receives an EngineConnection-compatible object (sendMessage/
+ *     onmessage/onclose/close) ready for DebuggerServerAdapter.attachEngine().
  *
- * One protocol per LWSContext: this build's mount -> protocol dispatch
- * always resolves to protocols[0] regardless of which mountpoint matched,
- * so serving both encodings means two contexts (two ports), each with a
- * single protocol entry — see qjs-debugger.js's `server` mode.
+ * Several mounted protocols on one LWSContext (http static files, a
+ * callback endpoint, several WS protocols, ...) all dispatch correctly by
+ * mountpoint, including with other LWSContexts already running in the same
+ * process — *except* WS upgrades from a client that sends no
+ * Sec-WebSocket-Protocol header at all: libwebsockets binds those to
+ * `vhost->default_protocol_index` (protocols[0]) unconditionally, per
+ * RFC 6455 §4.2.2's "the server MAY select one of th[e] [client-offered]
+ * subprotocols" — with none offered, mount data is never consulted (see
+ * libwebsockets' lws_process_ws_upgrade(), the `!ts.len` branch). So every
+ * WS connector here needs its client to request the matching protocol
+ * name explicitly (`new WebSocket(url, name)`) whenever it shares a
+ * context with other protocols; qjs-lws's own examples/debugger/demo.js
+ * already does this (`new WebSocket(url, 'browser')`), so
+ * qjs-debugger.js's `server` mode does the same for its own WS protocols.
  */
 
 import { TextDecoder, TextEncoder } from 'textcode';
-import { LWS_WRITE_TEXT } from 'lws.so';
+import { LWS_WRITE_BINARY, LWS_WRITE_TEXT } from 'lws.so';
 import { frameMessage, FrameDecoder } from './codec.js';
 
 const encoder = new TextEncoder();
 
-export function LWSConnector(adapterOrFactory, { name = 'debugger', raw = false } = {}) {
-  const ports = new WeakMap(); /* wsi -> { port, adapter, detach, ...decoder state } */
+export function LWSConnector(adapterOrFactory, { name = 'debugger', mode = 'json' } = {}) {
+  const incomingFramed = mode == 'raw';
+  const outgoingFramed = mode == 'raw' || mode == 'browser';
+
+  const ports = new Map(); /* wsi -> { port, adapter, detach, ...decoder state } */
   const adapterFor = typeof adapterOrFactory == 'function' ? adapterOrFactory : () => adapterOrFactory;
 
   function deliver(entry, msg) {
@@ -87,13 +121,13 @@ export function LWSConnector(adapterOrFactory, { name = 'debugger', raw = false 
       const port = {
         sendMessage: msg => {
           const json = JSON.stringify(msg);
-          wsi.write(raw ? frameMessage(json, encoder.encode(json).length) : json, LWS_WRITE_TEXT);
+          wsi.write(outgoingFramed ? frameMessage(json, encoder.encode(json).length) : json, LWS_WRITE_TEXT);
         },
         close: () => wsi.close?.(),
       };
 
       const entry = { port, adapter, detach: adapter.attachClient(port), partial: '' };
-      if(raw)
+      if(incomingFramed)
         entry.decoder = new FrameDecoder({
           /* codec.js is environment-free: it doesn't assume a global
              TextDecoder (QuickJS has none — only 'textcode' does) */
@@ -117,7 +151,7 @@ export function LWSConnector(adapterOrFactory, { name = 'debugger', raw = false 
       const entry = ports.get(wsi);
       if(!entry) return;
 
-      if(raw) {
+      if(incomingFramed) {
         entry.decoder.push(typeof data == 'string' ? encoder.encode(data) : data);
         return;
       }
@@ -130,6 +164,66 @@ export function LWSConnector(adapterOrFactory, { name = 'debugger', raw = false 
       if(entry) {
         entry.detach();
         ports.delete(wsi);
+      }
+    },
+
+    /** Push a raw binary WS message to every currently-attached client. */
+    broadcastBinary(bytes) {
+      for(const wsi of ports.keys())
+        try {
+          wsi.write(bytes, LWS_WRITE_BINARY);
+        } catch(e) {}
+    },
+  };
+}
+
+/**
+ * @param onConnect  (connection) => void — connection is EngineConnection-
+ *                   compatible: { sendMessage(obj), onmessage, onclose, close() }
+ */
+export function LWSEngineConnector({ name = 'engine', onConnect } = {}) {
+  const connections = new Map(); /* wsi -> connection */
+
+  return {
+    name,
+
+    onRawAdopt(wsi) {
+      const connection = {
+        sendMessage(msg) {
+          const json = JSON.stringify(msg);
+          wsi.write(frameMessage(json, encoder.encode(json).length));
+        },
+        onmessage: null,
+        onclose: null,
+        close: () => wsi.close?.(),
+      };
+
+      const decoder = new FrameDecoder({
+        decodeText: bytes => new TextDecoder().decode(bytes),
+        onFrame: json => {
+          let msg;
+          try {
+            msg = JSON.parse(json);
+          } catch(e) {
+            return;
+          }
+          connection.onmessage?.(msg);
+        },
+      });
+
+      connections.set(wsi, { connection, decoder });
+      onConnect?.(connection);
+    },
+
+    onRawRx(wsi, data) {
+      connections.get(wsi)?.decoder.push(typeof data == 'string' ? encoder.encode(data) : data);
+    },
+
+    onRawClose(wsi) {
+      const entry = connections.get(wsi);
+      if(entry) {
+        connections.delete(wsi);
+        entry.connection.onclose?.();
       }
     },
   };
