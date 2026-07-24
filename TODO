@@ -1,0 +1,7 @@
+- Finish retiring imgui/: decide whether any of its remaining files (poc.js,
+  imgui-debugger.js, target.js, ...) are still worth keeping now that gui/ covers the
+  supported GUI mode, and remove the rest.
+
+- gui/ parity extras (gui/PLAN.md phase 5 leftovers beyond what's landed): full REPL
+  command parity in the console pane's command line (completion, history) matching the
+  terminal REPL.

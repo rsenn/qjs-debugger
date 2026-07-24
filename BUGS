@@ -1,0 +1,9 @@
+- qjs-debugger.js: header comment says "Modes: repl (default, implemented), server, gui (stubs)"
+  but both server and gui modes are fully implemented (see README's mode table and
+  gui/PLAN.md phases 1-5, all landed). The comment is stale and should be updated.
+
+- imgui/: still contains debugger-client.js, imgui-debugger.js, poc.js, source-view.js,
+  target.js, transport.js, var-tree.js, wire-codec.js even though commit 53c6812 removed
+  the classes already implemented in the top-level *.js files. Per gui/PLAN.md, imgui/ is
+  "not used or touched" by the supported GUI (gui/), so it's unclear which of these
+  remaining files are still needed vs. leftover from the earlier prototype.
