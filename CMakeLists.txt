@@ -28,3 +28,18 @@ install(FILES gui/main.js gui/theme.js gui/widgets.js gui/toolbar.js gui/source-
 # server mode's browser UI (qjs-lws examples/debugger/demo.{html,js}, served
 # statically at path 'examples/browser' relative to the installed script)
 install(FILES examples/browser/demo.html examples/browser/demo.js DESTINATION bin/examples/browser)
+
+# VS Code extension package (qjs-debugger-<version>.vsix), built on demand via
+# `cmake --build build/native --target vsix` (or `ninja vsix`). Requires
+# `npx`/`@vscode/vsce` to be available; not part of the default build.
+find_program(NPX_EXECUTABLE npx)
+if(NPX_EXECUTABLE)
+  add_custom_target(
+    vsix
+    COMMAND ${NPX_EXECUTABLE} @vscode/vsce package --out ${CMAKE_CURRENT_BINARY_DIR}/
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "Packaging qjs-debugger VS Code extension (.vsix)"
+    VERBATIM)
+else()
+  message(STATUS "npx not found: 'vsix' target will not be available")
+endif()
