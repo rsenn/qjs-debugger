@@ -14,10 +14,10 @@
 import { spawn as spawnProcess } from 'child_process';
 import { readFileSync } from 'fs';
 import * as io from 'io';
-import { clearTimeout as osClearTimeout, read as osRead, setReadHandler, setTimeout as osSetTimeout } from 'os';
+import { clearTimeout as osClearTimeout, getpid, read as osRead, setReadHandler, setTimeout as osSetTimeout, signal as osSignal, SIGUSR1 } from 'os';
 import { basename, dirname, exists, join } from 'path';
 import { REPL } from 'repl';
-import { exit, out as stdout, puts } from 'std';
+import { exit, getenv, open as fopen, out as stdout, puts } from 'std';
 import { TextDecoder, TextEncoder } from 'textcode';
 import inspect from 'inspect';
 import process from 'process';
@@ -1232,8 +1232,30 @@ function StartDAP(dbg) {
   const encoder = new TextEncoder();
   let seq = 0;
 
+  /* Log every DAP message crossing stdio (both directions) to a file,
+     since stdout/stdin are the DAP stream itself and can't be used for
+     logging. Enabled either by QJS_DEBUGGER_DAP_LOG=/path/to/file up
+     front, or on demand by sending SIGUSR1 to this process, which opens
+     a generated /tmp/qjs-dap-<pid>-<timestamp>.log. */
+  let dapLog = null;
+  const openDapLog = path => {
+    if(dapLog) return;
+    dapLog = fopen(path, 'a');
+    console.error(`qjs-debugger: logging DAP traffic to ${path}`);
+  };
+  const dapLogPath = getenv('QJS_DEBUGGER_DAP_LOG');
+  if(dapLogPath) openDapLog(dapLogPath);
+  osSignal(SIGUSR1, () => openDapLog(`/tmp/qjs-dap-${getpid()}-${Date.now()}.log`));
+
+  const logDAP = (direction, msg) => {
+    if(!dapLog) return;
+    dapLog.puts(`[${new Date().toISOString()}] ${direction} ${JSON.stringify(msg)}\n`);
+    dapLog.flush();
+  };
+
   const send = msg => {
     const json = JSON.stringify({ seq: ++seq, ...msg });
+    logDAP('-->', { seq, ...msg });
     const length = encoder.encode(json).length;
     stdout.puts(`Content-Length: ${length}\r\n\r\n${json}`);
     stdout.flush();
@@ -1301,6 +1323,7 @@ function StartDAP(dbg) {
     } catch(e) {
       return;
     }
+    logDAP('<--', request);
     adapter.dispatch(request);
   });
 
