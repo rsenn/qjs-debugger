@@ -1380,7 +1380,7 @@ function main(...args) {
     const arg = args[i];
     let m;
 
-    if(arg == '--args') {
+    if(arg == '--args' || arg == '--') {
       program = args[++i] ?? null;
       programArgs = args.slice(i + 1);
       break;
