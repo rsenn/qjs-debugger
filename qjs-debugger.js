@@ -913,8 +913,15 @@ function forwardOutput(fd, write) {
 
   setReadHandler(fd, () => {
     const r = osRead(fd, buf, 0, buf.byteLength);
-    if(r > 0) write(decoder.decode(new Uint8Array(buf, 0, r)));
-    else setReadHandler(fd, null);
+    if(r > 0) {
+      try {
+        write(decoder.decode(new Uint8Array(buf, 0, r)));
+      } catch(e) {
+        /* fd got reused for something else (e.g. a qjs-lws socket) while this
+           handler was still registered; the bytes aren't ours to decode */
+        setReadHandler(fd, null);
+      }
+    } else setReadHandler(fd, null);
   });
 }
 
@@ -935,7 +942,11 @@ function drainOutput(fd, write) {
       break;
     }
     if(r <= 0) break;
-    write(decoder.decode(new Uint8Array(buf, 0, r)));
+    try {
+      write(decoder.decode(new Uint8Array(buf, 0, r)));
+    } catch(e) {
+      break;
+    }
   }
 }
 
