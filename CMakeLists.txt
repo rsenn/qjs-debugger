@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.9)
 
-project(qjs-debugger LANGUAGES NONE)
+project(qjs-debugger VERSION 0.9 LANGUAGES NONE)
 
 # main script: installed executable as bin/qjs-debugger, with a
 # bin/qjsm-debugger symlink (the name selects the debuggee interpreter)
