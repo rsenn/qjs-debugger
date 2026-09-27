@@ -7,3 +7,10 @@
   the classes already implemented in the top-level *.js files. Per gui/PLAN.md, imgui/ is
   "not used or touched" by the supported GUI (gui/), so it's unclear which of these
   remaining files are still needed vs. leftover from the earlier prototype.
+- repl-run-debuggee-sigsegv: after fixing the missing global os, running "r" in the
+  repl with plain qjs as debuggee makes the spawned qjs die with SIGSEGV
+  (qjs examples/orbit.js alone runs fine). found while fixing the 'os' module
+  required error; cause not investigated.
+
+    qjsm qjs-debugger.js --args examples/orbit.js   # then: r
+

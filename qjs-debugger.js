@@ -14,6 +14,7 @@
 import { spawn as spawnProcess } from 'child_process';
 import { readFileSync } from 'fs';
 import * as io from 'io';
+import * as os from 'os';
 import { clearTimeout as osClearTimeout, getpid, read as osRead, setReadHandler, setTimeout as osSetTimeout, signal as osSignal, SIGUSR1 } from 'os';
 import { basename, dirname, exists, join } from 'path';
 import { REPL } from 'repl';
@@ -1373,6 +1374,7 @@ function Usage(name) {
 
 function main(...args) {
   globalThis.io ??= io; /* AsyncSocket looks its read/write handlers up here */
+  globalThis.os ??= os; /* sockets' setReadHandler/setWriteHandler lookup (js_iohandler_fn "os") */
   globalThis.setTimeout ??= osSetTimeout;
   globalThis.clearTimeout ??= osClearTimeout;
 
