@@ -28,15 +28,15 @@ export function enabled(dbg, id) {
   switch (id) {
     case 'run':
     case 'start':
-      return !!dbg.program && !dbg.busy;
+      return (!!dbg.program || dbg.external) && !dbg.busy;
     case 'continue':
-      return stopped(dbg) || (!!dbg.program && !dbg.child && !dbg.busy);
+      return stopped(dbg) || ((!!dbg.program || dbg.external) && !dbg.child && !dbg.busy);
     case 'pause':
       return !!dbg.session && dbg.busy;
     case 'next':
     case 'step':
       /* on a not-started program these act like gdb 'start' */
-      return stopped(dbg) || (!!dbg.program && !dbg.child && !dbg.busy);
+      return stopped(dbg) || ((!!dbg.program || dbg.external) && !dbg.child && !dbg.busy);
     case 'finish':
       return stopped(dbg);
     case 'kill':
@@ -84,7 +84,7 @@ export function hit(app, rect, x, y) {
 
 export function statusText(dbg) {
   /* ASCII only: MiscFixedSC613 has no em-dash glyph */
-  if(!dbg.program) return ['(no program)', colors.dim];
+  if(!dbg.program && !dbg.external) return ['(no program)', colors.dim];
   if(!dbg.child) return [`${dbg.program} - not started`, colors.exited];
   if(dbg.busy || !dbg.stack.length) return [`${dbg.program} - running`, colors.running];
 

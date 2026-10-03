@@ -133,6 +133,7 @@ export class Debugger {
     this.address = address;
     this.listen = listen; /* true: we accept, engine connects out; false: engine listens, we connect */
     this.transport = transport;
+    this.external = false; /* don't spawn the debuggee: wait for (or connect to) a process started elsewhere */
     this.cwd = null; /* engine child's working directory; null: inherit ours */
   }
 
@@ -291,7 +292,17 @@ export class Debugger {
     };
 
     try {
-      if(this.listen) {
+      if(this.external) {
+        /* placeholder so the rest of the model treats us as "running" */
+        this.child = { external: true };
+        if(this.listen) {
+          this.print(`Waiting for a debuggee to connect to ${this.address}`);
+          this.print(`  (start it with QUICKJS_DEBUG_ADDRESS=${this.address})`);
+          this.connection = await EngineConnection.accept(this.address, { transport: this.transport });
+        } else {
+          this.connection = await EngineConnection.connect(this.address, { transport: this.transport });
+        }
+      } else if(this.listen) {
         /* the engine connects out without retrying: spawn it only once
            the transport reports the listener is bound */
         this.connection = await EngineConnection.accept(this.address, { transport: this.transport, listening: spawnEngine });
@@ -333,7 +344,8 @@ export class Debugger {
     drainOutput(this.child.stdout, this.printRaw);
     drainOutput(this.child.stderr, this.printRaw);
 
-    if(status?.signalCode != null) this.print(`[Inferior (process ${pid}) killed by signal ${status.signalCode}]`);
+    if(this.child.external) this.print('[Debuggee disconnected]');
+    else if(status?.signalCode != null) this.print(`[Inferior (process ${pid}) killed by signal ${status.signalCode}]`);
     else if(status?.exitCode) this.print(`[Inferior (process ${pid}) exited with code ${status.exitCode}]`);
     else this.print(`[Inferior (process ${pid}) exited normally]`);
 
@@ -561,7 +573,7 @@ export class Debugger {
   }
 
   async #start(arg, resume) {
-    if(!this.program) {
+    if(!this.program && !this.external) {
       this.print('No executable file specified.\nUse the "file" command.');
       return;
     }
@@ -569,7 +581,7 @@ export class Debugger {
     if(this.session) this.cmdKill('');
     if(arg) this.programArgs = splitArgs(arg);
 
-    this.print(`Starting program: ${this.interpreter} ${[this.program, ...this.programArgs].join(' ')}`);
+    if(!this.external) this.print(`Starting program: ${this.interpreter} ${[this.program, ...this.programArgs].join(' ')}`);
     this.onEvent?.('running');
 
     const entry = await this.launch();
@@ -847,7 +859,7 @@ export class Debugger {
     const status = child.wait?.();
     drainOutput(child.stdout, this.printRaw);
     drainOutput(child.stderr, this.printRaw);
-    this.print(`[Inferior (process ${child.pid}) killed]`);
+    this.print(child.external ? '[Debuggee detached]' : `[Inferior (process ${child.pid}) killed]`);
     this.child = this.connection = this.session = null;
     this.stack = [];
     this.currentFrame = 0;
@@ -1364,6 +1376,10 @@ function Usage(name) {
   -a, --address ADDR    engine debug address (default: 127.0.0.1:9901)
   -l, --listen          listen on ADDR, engine connects out (default)
   -c, --connect         engine listens on ADDR, debugger connects
+  -e, --external        don't spawn the debuggee: "run" waits for (-l) or
+                        connects to (-c) a process started elsewhere, e.g.
+                        QUICKJS_DEBUG_ADDRESS=ADDR qjs script.js
+                        (implied when no SCRIPT is given)
   -t, --transport NAME  socket (AsyncSocket) | lws (TCPSocketStream)
   -p, --port PORT       server mode: HTTP, WS ('debugger' subprotocol: JSON,
                         'debugger-raw': wire protocol) and the engine's TCP
@@ -1384,6 +1400,7 @@ function main(...args) {
   let mode = 'repl',
     address = '127.0.0.1:9901',
     listen = true,
+    external = false,
     transport = SocketTransport,
     port = 8998,
     program = null,
@@ -1402,6 +1419,7 @@ function main(...args) {
     else if((m = arg.match(/^(?:-p|--port)(?:=(.*))?$/))) port = +(m[1] ?? args[++i]);
     else if(arg == '-l' || arg == '--listen') listen = true;
     else if(arg == '-c' || arg == '--connect') listen = false;
+    else if(arg == '-e' || arg == '--external') external = true;
     else if((m = arg.match(/^(?:-t|--transport)(?:=(.*))?$/))) {
       const name = m[1] ?? args[++i];
       if(/^(socket|sockets?|async)/i.test(name)) transport = SocketTransport;
@@ -1428,6 +1446,7 @@ function main(...args) {
 
   const dbg = new Debugger({ interpreter, address, listen, transport });
   if(program !== null) dbg.setProgram(program, programArgs);
+  dbg.external = external || (program === null && (mode == 'repl' || mode == 'gui'));
 
   switch (mode) {
     case 'repl':
