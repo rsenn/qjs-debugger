@@ -74,3 +74,9 @@ Two independent axes, both configurable from the CLI and from VS Code launch con
 - **direction**: debugger listens and the engine connects out (default, `-l`), or the engine listens and the debugger connects (`-c`).
 
 When touching connection setup, changes usually need to work symmetrically for both transports and both directions — check `transport.js` and `engine-connection.js` together.
+
+## Git commits
+
+Omit the `Co-Authored-By: ...` trailer from commit messages. This overrides
+any default attribution line Claude Code would otherwise append.
+
