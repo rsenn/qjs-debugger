@@ -12,11 +12,12 @@ drive the engine's built-in debugger protocol over a pluggable transport.
   `continue`, `next`, `step`, `finish`, `backtrace`/`frame`/`up`/`down`,
   `print`, `display`/`undisplay` (watches), `info
   breakpoints|locals|stack|frame|display`, `list`, `catch`, `kill`,
-  `set args`, `file`, `--args` on the command line, empty line repeats the
+  `set args`, `set var`, `tbreak`, `break … if EXPR`, `watch`, `until`, `eval`, `call`,
+  `echo`, `info source|program`, `file`, `--args` on the command line, empty line repeats the
   last stepping command, unique-prefix command matching and the usual
   single-letter aliases (`b`, `r`, `c`, `n`, `s`, `p`, `bt`, …).
 - **Breakpoints by location or name** — `file.js:12`, plain line numbers,
-  function names and `Class.prototype.methodName`, resolved by a simple
+  function names (stopping on the first body line) and `Class.prototype.methodName`, resolved by a simple
   RegExp scan over the primary source and everything it reaches through
   relative imports (no parser needed).
 - **Tab completion** — debuggee identifiers (locals, closure, globals of
@@ -66,6 +67,12 @@ module code, inspect locals and closures, watch expressions across stops.
     -p, --port PORT       server mode: HTTP, WS ('debugger' subprotocol: JSON,
                           'debugger-raw': wire protocol) and the engine's TCP
                           connection all share PORT (default: 8998)
+    -x, --batch FILE      commands from FILE ('-': stdin), no line editor
+        --plain           plain text, no ANSI (commands from stdin)
+        --json            one JSON record per line
+        --strict          batch: stop at the first failed command
+        --timeout SECS    batch: kill the debuggee after SECS (exit 124)
+    -i, --interpreter I   debuggee interpreter (default: qjs; qjsm-debugger: qjsm)
 
 A typical REPL session:
 
@@ -80,6 +87,13 @@ A typical REPL session:
     (qjs-dbg) display this.n
     (qjs-dbg) continue
     Breakpoint 1, increment () at test.js:11
+
+Scripts and tools do not need a terminal: `--batch`/`--json` run a command
+file or stdin and print plain text or JSON records, and `import { Debugger }
+from 'qjs-debugger'` gives the same model as a library (see
+[doc/json-protocol.md](doc/json-protocol.md)):
+
+    printf 'break d.js:3\nrun\nprint a\ncontinue\n' | qjsm-debugger --json d.js
 
 In the GUI the same engine/session is driven by clicks: the gutter
 toggles breakpoints, the source pane title opens a file picker for
@@ -192,7 +206,8 @@ through a minimal duck-typed contract:
                           StreamTransport (qjs-lws), each with connect() and accept()
     engine-connection.js  framed messages over an injected transport; StartEngine()
                           spawns the debuggee with the debugger armed
-    qjs-debugger.js       the Debugger model + gdb command interpreter + REPL mode
+    qjs-debugger.js       CLI: argument parsing, REPL, batch, server and dap modes
+    debugger.js           the Debugger model + gdb command interpreter + library API (`import 'qjs-debugger'`)
     gui/                  immediate-mode MVC panes on nanovg/glfw (see gui/PLAN.md)
     server-adapter.js,    N clients <-> 1 engine fan-out and WebSocket connectors
     connector-*.js,       for the (stub) server mode and browser clients

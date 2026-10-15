@@ -102,7 +102,13 @@ export class EngineConnection {
 
   /** Convenience: bind a DebugSession to this connection. */
   attachSession(options) {
-    const session = new DebugSession(msg => this.sendMessage(msg), options);
+    /* a send that fails (connection gone) surfaces through the session's
+       aborted requests; the promise itself must not go unhandled */
+    const session = new DebugSession(msg => {
+      const sent = this.sendMessage(msg);
+      sent.catch(() => {});
+      return sent;
+    }, options);
     this.onmessage = msg => session.dispatch(msg);
     const prevClose = this.onclose;
     this.onclose = () => (session.abort('engine connection closed'), prevClose?.());

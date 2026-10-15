@@ -5,3 +5,9 @@
 - gui/ parity extras (gui/PLAN.md phase 5 leftovers beyond what's landed): full REPL
   command parity in the console pane's command line (completion, history) matching the
   terminal REPL.
+
+- watch: software watchpoints step with `next`, so a change made inside a called function shows up when it returns;
+  an engine-side data watch would be exact and fast.
+- return/jump: the engine protocol has no forced return, so `return` is missing; needs a protocol request.
+- server mode: replay the current state (entry stop, stack) to a client connecting late.
+- batch mode: `source FILE` command and `define`, if scripts start to need them.

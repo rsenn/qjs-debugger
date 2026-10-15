@@ -17,8 +17,15 @@ execute_process(COMMAND ${CMAKE_COMMAND} -E create_symlink qjs-debugger \$ENV{DE
 )
 
 # support modules imported relative to the script
-install(FILES codec.js session.js engine-connection.js transport.js server-adapter.js vscode-dap.js connector-lws.js
+install(FILES debugger.js codec.js session.js engine-connection.js transport.js server-adapter.js vscode-dap.js
+              connector-lws.js
         DESTINATION bin)
+
+# library entry: `import { Debugger } from 'qjs-debugger'` resolves through the
+# module path (lib/quickjs/qjs-debugger.js re-exports bin/debugger.js)
+install(
+  CODE "file(WRITE \"\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/lib/quickjs/qjs-debugger.js\" \"export * from '../../bin/debugger.js';\\n\")
+message(\"Wrote '\$ENV{DESTDIR}${CMAKE_INSTALL_PREFIX}/lib/quickjs/qjs-debugger.js'\")")
 
 # gui mode (loaded dynamically by qjs-debugger -m gui)
 install(FILES gui/main.js gui/theme.js gui/widgets.js gui/toolbar.js gui/source-pane.js gui/console-pane.js

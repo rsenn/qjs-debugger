@@ -1,0 +1,7 @@
+break g.js:11
+run
+catch throw
+continue
+bt
+info locals
+continue

@@ -1,0 +1,17 @@
+(qjs-dbg) break f.js:3
+Breakpoint 1 at f.js:3
+(qjs-dbg) run
+Starting program: qjsm f.js
+Breakpoint 1, f () at f.js:3
+3	  return b + 1;
+(qjs-dbg) bt
+#0 f () at f.js:3
+#1  <anonymous> () at f.js:5
+(qjs-dbg) print a
+$1 = 20
+(qjs-dbg) print b
+$2 = 40
+(qjs-dbg) continue
+41
+[Inferior (process N) exited normally]
+(qjs-dbg) quit

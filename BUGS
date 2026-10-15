@@ -1,16 +1,14 @@
-- qjs-debugger.js: header comment says "Modes: repl (default, implemented), server, gui (stubs)"
-  but both server and gui modes are fully implemented (see README's mode table and
-  gui/PLAN.md phases 1-5, all landed). The comment is stale and should be updated.
-
 - imgui/: still contains debugger-client.js, imgui-debugger.js, poc.js, source-view.js,
   target.js, transport.js, var-tree.js, wire-codec.js even though commit 53c6812 removed
   the classes already implemented in the top-level *.js files. Per gui/PLAN.md, imgui/ is
   "not used or touched" by the supported GUI (gui/), so it's unclear which of these
   remaining files are still needed vs. leftover from the earlier prototype.
-- repl-run-debuggee-sigsegv: after fixing the missing global os, running "r" in the
-  repl with plain qjs as debuggee makes the spawned qjs die with SIGSEGV
-  (qjs examples/orbit.js alone runs fine). found while fixing the 'os' module
-  required error; cause not investigated.
-
-    qjsm qjs-debugger.js --args examples/orbit.js   # then: r
-
+- installed-qjs-is-i386: /usr/local/bin/qjs is a 32-bit (i686) build linked against /usr/local/lib/i386-linux-gnu/libquickjs.so, so
+  qjs-debugger (debuggee qjs) runs on an engine without the patches/008 fixes, and an earlier "r" in the repl
+  killed it with SIGSEGV (the `print` crash). qjsm is x86-64 and fine. Reinstall a 64-bit qjs.
+- server-late-client: a WebSocket client that connects after the engine reached its entry stop never sees that
+  StoppedEvent (broadcast to nobody); it has to assume the stop and send continue/breakpoints blindly.
+- process-rejection-tracker: an unhandled promise rejection under the installed qjsm prints "TypeError: not a
+  function at rejection (qjs-modules/lib/process.js)" instead of the rejection; found while debugging the
+  library API, avoided there by keeping send errors handled (engine-connection.js attachSession).
+- info-locals-exception: `info locals` lists an `<exception>` pseudo variable ("[unsupported type]" when none is pending).

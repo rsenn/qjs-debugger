@@ -1,0 +1,15 @@
+break g.js:4 if i == 3
+tbreak g.js:6
+run
+print i
+set var s = 100
+print s
+info breakpoints
+watch s
+next
+next
+echo -- until --\n
+until
+until
+info source
+continue

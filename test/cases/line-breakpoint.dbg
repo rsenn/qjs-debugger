@@ -1,0 +1,7 @@
+break f.js:3
+run
+bt
+print a
+print b
+continue
+quit

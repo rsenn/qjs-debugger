@@ -1,0 +1,21 @@
+(qjs-dbg) break g.js:11
+Breakpoint 1 at g.js:11
+(qjs-dbg) run
+Starting program: qjsm g.js
+Breakpoint 1, <anonymous> () at g.js:11
+11	console.log(sum(4));
+(qjs-dbg) catch throw
+Catchpoint on exceptions enabled.
+(qjs-dbg) continue
+10
+Stopped on exception, boom () at g.js:9
+9	  throw new Error('boom');
+(qjs-dbg) bt
+#0 boom () at g.js:9
+#1  <anonymous> () at g.js:13
+(qjs-dbg) info locals
+<exception> = Error: boom
+(qjs-dbg) continue
+caught
+end
+[Inferior (process N) exited normally]

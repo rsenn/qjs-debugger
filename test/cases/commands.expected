@@ -1,0 +1,50 @@
+(qjs-dbg) break g.js:4 if i == 3
+Breakpoint 1 at g.js:4 if i == 3
+(qjs-dbg) tbreak g.js:6
+Temporary breakpoint 2 at g.js:6
+(qjs-dbg) run
+Starting program: qjsm g.js
+Breakpoint 1, sum () at g.js:4
+4	    s += i;
+(qjs-dbg) print i
+$1 = 3
+(qjs-dbg) set var s = 100
+(qjs-dbg) print s
+$2 = 100
+(qjs-dbg) info breakpoints
+Num     Type           What
+1       breakpoint     g.js:4 if i == 3
+2       tbreakpoint    g.js:6
+(qjs-dbg) watch s
+Watchpoint 3: s
+(qjs-dbg) next
+
+Watchpoint 3: s
+
+Old value = 100
+New value = 103
+sum () at g.js:3
+3	  for(let i = 1; i <= n; i++) {
+(qjs-dbg) next
+
+Watchpoint 3: s
+
+Old value = 103
+New value = 107
+sum () at g.js:6
+6	  return s;
+(qjs-dbg) echo -- until --\n
+-- until --
+(qjs-dbg) until
+11	console.log(sum(4));
+(qjs-dbg) until
+107
+13	  boom();
+(qjs-dbg) info source
+Current source file is g.js
+Contains 18 lines.
+Program: g.js
+(qjs-dbg) continue
+caught
+end
+[Inferior (process N) exited normally]

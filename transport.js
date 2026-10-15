@@ -31,6 +31,9 @@ function splitAddress(address) {
 
 export class SocketTransport {
   #sock;
+  #reading = false;
+  #writing = 0;
+  #closing = false;
 
   constructor(sock) {
     this.#sock = sock;
@@ -89,19 +92,50 @@ export class SocketTransport {
   async *[Symbol.asyncIterator]() {
     const buf = new ArrayBuffer(65536);
 
-    for(;;) {
-      const r = await this.#sock.recv(buf);
-      if(r <= 0) break;
-      yield new Uint8Array(buf, 0, r);
+    try {
+      for(;;) {
+        this.#reading = true;
+        const r = await this.#sock.recv(buf);
+        this.#reading = false;
+        if(r <= 0 || this.#closing) break;
+        yield new Uint8Array(buf, 0, r);
+      }
+    } finally {
+      this.#reading = false;
+      if(this.#closing) this.#release();
     }
   }
 
   send(data) {
-    if(!this.#sock) throw new Error('SocketTransport: closed');
-    return this.#sock.send(data);
+    if(!this.#sock || this.#closing) throw new Error('SocketTransport: closed');
+
+    this.#writing++;
+    const done = () => {
+      this.#writing--;
+      if(this.#closing) this.#release();
+    };
+    const sent = this.#sock.send(data);
+    Promise.resolve(sent).then(done, done);
+    return sent;
   }
 
+  /* closing the fd under a pending recv()/send() leaves its poll handler
+     behind and the event loop spins on the dead fd: shut the connection
+     down so they complete, and close the fd once they have */
   close() {
+    if(!this.#sock || this.#closing) return;
+    this.#closing = true;
+
+    try {
+      this.#sock.shutdown(2 /* SHUT_RDWR */);
+    } catch(e) {}
+
+    this.#release();
+  }
+
+  #release() {
+    if(this.#reading || this.#writing > 0) return;
+
     try {
       this.#sock?.close();
     } catch(e) {}

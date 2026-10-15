@@ -25,7 +25,7 @@ cmake --build build/native -j$(nproc)
 cmake --install build/native
 ```
 
-This directory's `CMakeLists.txt` just installs the JS files: `qjs-debugger.js` → `bin/qjs-debugger` (+ `qjsm-debugger` symlink), the support modules (`codec.js`, `session.js`, `engine-connection.js`, `transport.js`, `server-adapter.js`, `vscode-dap.js`, `connector-lws.js`) → `bin/`, `gui/*.js` → `bin/gui/`, and the browser demo → `bin/examples/browser/`. Adding a new support module or GUI pane means adding it to the relevant `install(FILES …)` list here too.
+This directory's `CMakeLists.txt` just installs the JS files: `qjs-debugger.js` → `bin/qjs-debugger` (+ `qjsm-debugger` symlink), the support modules (`debugger.js`, `codec.js`, `session.js`, `engine-connection.js`, `transport.js`, `server-adapter.js`, `vscode-dap.js`, `connector-lws.js`) → `bin/`, `gui/*.js` → `bin/gui/`, and the browser demo → `bin/examples/browser/`. Adding a new support module or GUI pane means adding it to the relevant `install(FILES …)` list here too.
 
 Running:
 ```
@@ -35,7 +35,7 @@ qjs-debugger -m server script.js        # HTTP + WS + engine TCP, all on one por
 qjs-debugger -m dap                     # DAP adapter over stdio (VS Code spawns this)
 ```
 
-There is no automated test suite. `Debugger`'s core logic is exercised indirectly via the REPL; GUI changes are smoke-tested manually (`qjs-debugger -m gui target.js`: set a breakpoint, step, inspect variables, run to exit — see `gui/PLAN.md` "Testing"). Verify JS changes by actually running the affected mode against `examples/orbit.js` or a scratch script.
+`test/run.sh` is the regression suite (batch-mode cases, library, attach both directions, DAP and server clients). `Debugger`'s core logic is also exercised via the REPL; GUI changes are smoke-tested manually (`qjs-debugger -m gui target.js`: set a breakpoint, step, inspect variables, run to exit — see `gui/PLAN.md` "Testing"). Verify JS changes by actually running the affected mode against `examples/orbit.js` or a scratch script.
 
 VS Code extension: load as an Extension Development Host (`code --extensionDevelopmentPath="$PWD" /path/to/project`), or package with `npx @vscode/vsce package` and `code --install-extension qjs-debugger-*.vsix`.
 
@@ -47,7 +47,8 @@ Small modules with strict layering; every class talks to its neighbors through a
 - `session.js` — protocol state machine: seqs, pending requests, events. Zero imports.
 - `transport.js` — byte transports: `SocketTransport` ('sockets', qjs-modules' `AsyncSocket`) and `StreamTransport` (qjs-lws). Each exposes `connect()`/`accept()`.
 - `engine-connection.js` — framed messages over an injected transport; `StartEngine()` spawns the debuggee with the debugger armed (`QUICKJS_DEBUG_ADDRESS`/`QUICKJS_DEBUG_LISTEN_ADDRESS`).
-- `qjs-debugger.js` — the `Debugger` model, the gdb-style command interpreter, and REPL mode. This is the biggest file and the one most other pieces depend on.
+- `debugger.js` — the headless `Debugger` model, the gdb-style command interpreter and the library API (`launch`/`break`/`continue`/`eval`/`on`); installed as `import 'qjs-debugger'` too. The biggest file and the one most other pieces depend on. Commands print text and return a result payload; `execute()` turns that into a `result` record (see `doc/json-protocol.md`).
+- `qjs-debugger.js` — the CLI: argument parsing, REPL mode, batch mode (`--batch`/`--plain`/`--json`), server and dap modes.
 - `vscode-dap.js` — DAP adapter (`-m dap`) wrapping the same `Debugger`/`EngineConnection` for VS Code.
 - `gui/` — immediate-mode MVC panes on nanovg/glfw (`-m gui`); see `gui/PLAN.md` for the full design and the event-loop constraint below. `imgui/` is an unrelated/unused prior attempt — don't touch it for GUI work.
 - `server-adapter.js`, `connector-lws.js`, `connector-qjsnet.js`, `client.js` — N-clients-to-1-engine fan-out and WebSocket connectors for `-m server`, plus the browser demo client under `examples/browser/`.
@@ -77,6 +78,6 @@ When touching connection setup, changes usually need to work symmetrically for b
 
 ## Git commits
 
-Omit the `Co-Authored-By: ...` trailer from commit messages. This overrides
-any default attribution line Claude Code would otherwise append.
+End commit messages with the `Co-Authored-By: ...` trailer from Claude Code's
+attribution guidance. This project's own rule, not a default to be dropped.
 

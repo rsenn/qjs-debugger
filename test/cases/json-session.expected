@@ -1,0 +1,9 @@
+{"type":"result","command":"break","ok":true,"breakpoint":{"num":1,"file":"f.js","line":3,"spec":"f.js:3"}}
+{"type":"stopped","reason":"breakpoint","breakpoint":1,"frame":0,"function":"f","file":"f.js","line":3,"source":"  return b + 1;","stack":[{"frame":0,"function":"f","file":"f.js","line":3},{"frame":1,"function":"<anonymous>","file":"f.js","line":5}],"locals":[{"name":"a","value":"20","type":"integer"},{"name":"b","value":"40","type":"integer"}]}
+{"type":"result","command":"run","ok":true,"state":"stopped","reason":"breakpoint","file":"f.js","line":3,"function":"f"}
+{"type":"result","command":"backtrace","ok":true,"stack":[{"frame":0,"function":"f","file":"f.js","line":3},{"frame":1,"function":"<anonymous>","file":"f.js","line":5}]}
+{"type":"result","command":"print","ok":true,"n":1,"expr":"a","value":20,"text":"20","valueType":"integer"}
+{"type":"result","command":"eval","ok":true,"expr":"b","value":40,"text":"40","valueType":"integer"}
+{"type":"output","stream":"stdout","data":"41\n"}
+{"type":"exited","code":0,"signal":null,"pid":0}
+{"type":"result","command":"continue","ok":true,"state":"exited","code":0,"signal":null}

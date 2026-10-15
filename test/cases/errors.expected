@@ -1,0 +1,9 @@
+(qjs-dbg) bogus
+Undefined command: "bogus".  Try "help".
+(qjs-dbg) print 1
+The program is not being run.
+(qjs-dbg) run
+Starting program: qjsm f.js
+41
+[Inferior (process N) exited normally]
+(qjs-dbg) quit

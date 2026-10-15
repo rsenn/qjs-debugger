@@ -1,0 +1,4 @@
+(qjs-dbg) run
+Starting program: qjsm exit3.js
+bye
+[Inferior (process N) exited with code 3]
