@@ -33,6 +33,11 @@ export class DAPAdapter {
   #threadId;
   #resuming = 0; /* resume requests (continue/next/...) whose response has not been sent yet */
   #deferred = []; /* execution-state events held back until then */
+  #holding = false; /* the response went out, the held events follow after `holdDelay` */
+
+  /** schedule a function after a short delay (ms); injected, the default runs it at once */
+  defer = (fn, ms) => fn();
+  holdDelay = 30;
 
   /** Optional hooks; assign to handle launch/attach/configurationDone/disconnect/terminate. */
   onLaunch = async () => {};
@@ -88,7 +93,7 @@ export class DAPAdapter {
      response of the step that produced it marks the thread running again (stepping then seems to
      hang until Pause). Hold such events back until the in-flight resume request has been answered. */
   #stateEvent(event, body) {
-    if(this.#resuming) this.#deferred.push([event, body]);
+    if(this.#resuming || this.#holding) this.#deferred.push([event, body]);
     else this.event(event, body);
   }
 
@@ -97,7 +102,16 @@ export class DAPAdapter {
     try {
       await this.#forward(request, request.arguments ?? {});
     } finally {
-      if(--this.#resuming == 0) for(const [event, body] of this.#deferred.splice(0)) this.event(event, body);
+      /* ...and a moment longer: a client that gets the response and the stop in one read may
+         handle the stop first and then treat the response as "resumed" (Sublime's Debugger package
+         then marks the thread running again and flips to its console panel) */
+      if(--this.#resuming == 0) {
+        this.#holding = true;
+        this.defer(() => {
+          this.#holding = false;
+          for(const [event, body] of this.#deferred.splice(0)) this.event(event, body);
+        }, this.holdDelay);
+      }
     }
   }
 

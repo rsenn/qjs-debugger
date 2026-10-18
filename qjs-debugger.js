@@ -474,6 +474,7 @@ function StartDAP(dbg) {
   };
 
   const adapter = new DAPAdapter(send);
+  adapter.defer = (fn, ms) => osSetTimeout(fn, ms);
 
   const output = (text, category = 'console') => adapter.event('output', { category, output: text });
   /* status lines for the client's debug console */
@@ -487,6 +488,10 @@ function StartDAP(dbg) {
   dbg.printRaw = s => output(s, 'stdout');
 
   let stopOnEntry = false;
+
+  /* our stdin is the DAP stream: a debuggee that reads stdin (extract-c.js does when it has no
+     file arguments) would swallow the client's requests and block, so it gets /dev/null */
+  dbg.stdin = 'ignore';
 
   const configure = (args, defaultListen) => {
     if(args.address) dbg.address = args.address;

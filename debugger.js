@@ -137,6 +137,7 @@ export class Debugger {
   collectState = false; /* fill the 'stopped' record with stack + locals (json mode, library) */
   lastError = null; /* message of the failed command, set by #fail(); null when it succeeded */
   env = null; /* environment for the spawned debuggee (default: our own) */
+  stdin = null; /* stdio for the debuggee's stdin: 'inherit' (default), 'ignore' or 'pipe' */
   exitCode = null; /* exit status of the debuggee after 'exited' (128+N for signal N) */
   lastStop = null; /* the most recent 'stopped' / 'exited' record */
 
@@ -375,6 +376,7 @@ export class Debugger {
         listen: !this.listen,
         interpreter: this.interpreter,
         env: this.env ?? process.env,
+        stdin: this.stdin ?? 'inherit',
         cwd: this.cwd ?? undefined,
       });
       this.child = child;
