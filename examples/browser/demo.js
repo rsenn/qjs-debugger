@@ -16,7 +16,6 @@
  * restricts to .js files under the user's home.
  */
 
-// 0: silent, 1: std{out,err,in}, 2: + wire protocol. Set from devtools.
 let debugLevel = 1;
 
 function debugLog(level, arrow, color, label, ...args) {
@@ -36,9 +35,6 @@ const breakpoints = new Map(); // filename -> Set<line>
 const KEYWORDS =
   'async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|enum|export|extends|finally|for|from|function|if|import|in|instanceof|let|new|of|return|static|super|switch|this|throw|try|typeof|var|void|while|with|yield';
 
-// `other` covers every remaining char so escaping never splits across two
-// <span>s. Regex-vs-division is a simple heuristic (word char before `/`
-// means division) - misreads `return /re/`, an accepted edge case.
 const tokenRe = new RegExp(
   '(?<comment>//[^\\n]*|/\\*[\\s\\S]*?\\*/)' +
     '|(?<regex>(?<![\\w$)\\]]\\s*)/(?:[^/\\\\\\n[]|\\\\.|\\[(?:[^\\]\\\\\\n]|\\\\.)*\\])+/[a-z]*)' +
@@ -103,10 +99,10 @@ function onFrame(json) {
     pending.delete(msg.request_seq);
   } else if(msg.type === 'event') {
     if(msg.event.type === 'StoppedEvent') {
-      setStatus(`paused (${msg.event.reason})`);
+      setStatus(`Paused (${msg.event.reason})`);
       refresh();
     } else if(msg.event.type === 'terminated') {
-      setStatus('debug target terminated');
+      setStatus('Debug target terminated');
     }
   }
 }
@@ -130,10 +126,6 @@ async function showSource(filename, line) {
   let text = sourceCache.get(filename);
 
   if(text === undefined) {
-    // Absolute paths point outside this directory (e.g. modules the debug
-    // target loaded from elsewhere on disk) and aren't reachable through
-    // the static mount at '/' - fetch those through /source instead, which
-    // is restricted server-side to .js files under the user's home dir.
     const url = filename.startsWith('/') ? `/source?path=${encodeURIComponent(filename)}` : filename;
     try {
       const res = await fetch(url);
@@ -180,7 +172,7 @@ async function refresh() {
   varsEl.innerHTML = '';
 
   for(const scope of await request('scopes', { frameId: frame.id })) {
-    if(scope.expensive) continue; // skip Global: huge builtin list, not useful here
+    if(scope.expensive) continue;
 
     const heading = document.createElement('div');
     heading.className = 'scope';
@@ -189,7 +181,17 @@ async function refresh() {
 
     for(const v of await request('variables', { variablesReference: scope.reference })) {
       const row = document.createElement('div');
-      row.textContent = `${v.name} = ${v.value}`;
+      row.className = 'variable-row';
+      
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'var-name';
+      nameSpan.textContent = v.name;
+      
+      const valSpan = document.createElement('span');
+      valSpan.className = 'var-value';
+      valSpan.textContent = v.value;
+
+      row.append(nameSpan, valSpan);
       varsEl.appendChild(row);
     }
   }
@@ -202,7 +204,16 @@ async function evaluate(expression, frameId = currentFrameId) {
 
 async function runEval() {
   const expression = evalInput.value;
-  if(expression) evalResultEl.textContent = await evaluate(expression);
+  if(expression) {
+    evalResultEl.textContent = `> ${expression}`;
+    try {
+      const res = await evaluate(expression);
+      evalResultEl.textContent = res;
+    } catch(err) {
+      evalResultEl.textContent = `Error: ${err.message}`;
+    }
+    evalInput.value = '';
+  }
 }
 
 document.getElementById('evalRun').addEventListener('click', runEval);
@@ -210,7 +221,7 @@ evalInput.addEventListener('keydown', e => e.key === 'Enter' && runEval());
 
 const keyMap = { F5: 'continue', F9: 'pause', F10: 'next', F11: 'stepIn', F12: 'stepOut' };
 
-for(const [key, id] of Object.entries(keyMap)) document.getElementById(id).title = key;
+for(const [key, id] of Object.entries(keyMap)) document.getElementById(id).title = `${key} (${document.getElementById(id).textContent})`;
 
 for(const id of ['continue', 'next', 'stepIn', 'stepOut', 'pause']) document.getElementById(id).addEventListener('click', () => request(id));
 
@@ -225,14 +236,6 @@ document.addEventListener('keydown', e => {
 ws = new WebSocket(`ws://${location.host}/debug`, 'browser');
 ws.binaryType = 'arraybuffer';
 
-// JSON debug-wire frames arrive as WS text messages, framed the same way
-// server.js frames them on the raw TCP side to the debug target ("%08x '\n'
-// <json> '\n'", the 8 hex digits counting json's UTF-8 byte length + 1 for
-// the trailing '\n'). A large frame (e.g. a big variable listing) can come
-// out on the wire as several separate WS messages instead of one - this
-// decoder reassembles by the explicit length prefix rather than assuming
-// one WS message == one frame. Streamed stdout/stderr (WS binary messages)
-// stay small enough to not need this and are handled as before.
 let textBuf = new Uint8Array(0);
 
 function decodeFrames() {
@@ -249,9 +252,9 @@ function decodeFrames() {
   }
 }
 
-ws.onopen = () => setStatus('connected — waiting for a debug target…');
-ws.onclose = () => setStatus('disconnected');
-ws.onerror = () => setStatus('connection error');
+ws.onopen = () => setStatus('Connected — waiting for a debug target…');
+ws.onclose = () => setStatus('Disconnected');
+ws.onerror = () => setStatus('Connection error');
 ws.onmessage = ({ data }) => {
   if(typeof data == 'string') {
     const chunk = new TextEncoder().encode(data);

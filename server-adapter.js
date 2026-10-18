@@ -161,11 +161,11 @@ export class DebuggerServerAdapter {
 
       case 'connect': {
         try {
-          await this.port ////export default(msg.address);
-            .sendMessage({
-              type: 'response',
-              response: { command: 'connect', address: msg.address },
-            });
+          await this.connect(msg.address, msg.options);
+          port.sendMessage({
+            type: 'response',
+            response: { command: 'connect', address: msg.address },
+          });
         } catch(error) {
           port.sendMessage({
             type: 'error',
