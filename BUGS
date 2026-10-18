@@ -12,3 +12,7 @@
   function at rejection (qjs-modules/lib/process.js)" instead of the rejection; found while debugging the
   library API, avoided there by keeping send errors handled (engine-connection.js attachSession).
 - info-locals-exception: `info locals` lists an `<exception>` pseudo variable ("[unsupported type]" when none is pending).
+- step-over-await: `next`/`stepIn` on a line that awaits (e.g. `await new Promise(r => setTimeout(r, 0))`) never stops
+  in the same function afterwards: the program runs on to the next breakpoint (or to the end) and only Pause helps.
+  Engine side (quickjs-debugger.c, JS_DEBUGGER_STEP compares stack depth against step_depth, but an async function
+  resumes from the job queue at a different depth). Reproduced with a 3-line loop; seen on extract-c.js (progress loop).

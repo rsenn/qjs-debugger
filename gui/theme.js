@@ -8,11 +8,12 @@
 import { gethome } from 'path';
 import { RGB } from 'nanovg';
 
-export const FONT = 'fixed';
-export const FONT_SIZE = 12;
+export let FONT = 'fixed';
+export let FONT_SIZE = 14;
 
 const FONT_PATHS = [
   gethome() + '/.fonts/MiscFixedSC613.ttf',
+  gethome() + '/.fonts/miscfs__.ttf' /* same font under its distro file name */,
   '/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf',
   '/usr/share/fonts/TTF/DejaVuSansMono.ttf',
 ];
@@ -21,6 +22,8 @@ const FONT_PATHS = [
 export function loadFont(vg) {
   for(const path of FONT_PATHS)
     if(vg.CreateFont(FONT, path) >= 0) {
+      /* the outlines are a 6x13 pixel grid at 1/12 em per pixel: only multiples of 12 land on whole pixels */
+      if(/misc/i.test(path)) FONT_SIZE = 12;
       /* measure the monospace advance; column math everywhere uses it
          (TextBounds takes exactly (x, y, str, end, bounds) and returns
          the advance) */
@@ -36,6 +39,23 @@ export function loadFont(vg) {
   return null;
 }
 
+/**
+ * Dynamically adjust the UI font size and recalculate character metrics.
+ * Clamps the size between 8px and 32px.
+ */
+export function changeFontSize(vg, delta) {
+  FONT_SIZE = Math.max(8, Math.min(32, FONT_SIZE + delta));
+  metrics.rowH = FONT_SIZE + 4;
+
+  if (vg) {
+    try {
+      vg.FontFace(FONT);
+      vg.FontSize(FONT_SIZE);
+      const w = vg.TextBounds(0, 0, 'MMMMMMMMMM', null, {});
+      if (w > 0) metrics.charW = w / 10;
+    } catch (e) {}
+  }
+}
 export const colors = {
   bg: RGB(0, 0, 0),
   panel: RGB(0, 0, 0),

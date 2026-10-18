@@ -476,6 +476,13 @@ function StartDAP(dbg) {
   const adapter = new DAPAdapter(send);
 
   const output = (text, category = 'console') => adapter.event('output', { category, output: text });
+  /* status lines for the client's debug console */
+  const status = text => output(`[qjsm-debugger] ${text}\n`);
+  const watch = session => {
+    session.on('stopped', ev => status(ev.reason == 'entry' ? 'stopped at entry' : `stopped (${ev.reason}${ev.description ? `: ${ev.description}` : ''})`));
+    session.on('terminated', () => status('program terminated'));
+  };
+  status(`DAP adapter started (pid ${getpid()})`);
   dbg.print = (...args) => output(args.join(' ') + '\n');
   dbg.printRaw = s => output(s, 'stdout');
 
@@ -483,9 +490,14 @@ function StartDAP(dbg) {
 
   const configure = (args, defaultListen) => {
     if(args.address) dbg.address = args.address;
+    /* launch without an explicit address: use a port of our own, since the fixed default
+       would be shared with other (stale) adapters — the listener sets SO_REUSEPORT, so the
+       engine could end up connecting to the wrong one */
+    else if(defaultListen && dbg.address == '127.0.0.1:9901') dbg.address = `127.0.0.1:${20000 + (getpid() % 40000)}`;
     dbg.listen = typeof args.listen == 'boolean' ? args.listen : defaultListen;
     if(args.interpreter) dbg.interpreter = args.interpreter;
     if(args.cwd) dbg.cwd = args.cwd;
+    if(args.env) dbg.env = { ...process.env, ...args.env };
     stopOnEntry = !!args.stopOnEntry;
   };
 
@@ -495,8 +507,12 @@ function StartDAP(dbg) {
     if(!args.program) throw new Error("launch requires 'program'");
     configure(args, true);
     dbg.setProgram(args.program, args.args ?? []);
+    status(`launching: ${[dbg.interpreter, args.program, ...(args.args ?? [])].join(' ')}${dbg.cwd ? ` (cwd ${dbg.cwd})` : ''}`);
+    status(`waiting for the engine on ${dbg.address} (${dbg.listen ? 'listening, engine connects out' : 'engine listens, connecting'})`);
     await dbg.launchEngine();
     adapter.attachSession(dbg.session);
+    watch(dbg.session);
+    status(`launched, process ${dbg.child?.pid ?? '?'} connected${stopOnEntry ? ', stopping on entry' : ''}`);
   };
 
   /* attach: connect to (or accept from) an already-running engine at
@@ -505,6 +521,7 @@ function StartDAP(dbg) {
   adapter.onAttach = async args => {
     configure(args, false);
     if(!dbg.address) throw new Error("attach requires 'address'");
+    status(`attaching to ${dbg.address} (${dbg.listen ? 'waiting for the engine to connect' : 'connecting to the listening engine'})`);
 
     dbg.connection = dbg.listen
       ? await EngineConnection.accept(dbg.address, { transport: dbg.transport })
@@ -513,6 +530,8 @@ function StartDAP(dbg) {
     dbg.session = dbg.connection.attachSession({ timeout: 0 });
     await dbg.session.waitEvent('stopped'); /* the engine stops at 'entry' as soon as it attaches */
     adapter.attachSession(dbg.session);
+    watch(dbg.session);
+    status('attached');
   };
 
   /* breakpoints (setBreakpoints/setExceptionBreakpoints) are only sent by
@@ -520,10 +539,20 @@ function StartDAP(dbg) {
      entry stop once they're all in, signaled by configurationDone —
      unless the launch/attach config asked to stay stopped */
   adapter.onConfigurationDone = async () => {
-    if(!stopOnEntry) await dbg.session?.request('continue').catch(() => {});
+    if(stopOnEntry) {
+      status('configuration done, staying stopped on entry');
+      /* the engine's own entry stop happened before the client could listen for it (the adapter
+         swallows it); report it now so the client knows the program is paused and enables stepping */
+      adapter.event('stopped', { reason: 'entry', threadId: 1, allThreadsStopped: true });
+    }
+    else {
+      status('configuration done, running');
+      await dbg.session?.request('continue').catch(() => {});
+    }
   };
 
   adapter.onDisconnect = adapter.onTerminate = async () => {
+    status('disconnecting');
     if(dbg.child) dbg.cmdKill();
     else dbg.connection?.close();
   };
@@ -548,7 +577,12 @@ function StartDAP(dbg) {
       r = 0;
     }
     if(r > 0) decoder.push(new Uint8Array(buf, 0, r));
-    else setReadHandler(0, null);
+    else {
+      /* client went away without 'disconnect': don't leave the adapter (and its debuggee) behind */
+      setReadHandler(0, null);
+      status('client closed the connection, exiting');
+      adapter.onDisconnect().finally(() => exit(0));
+    }
   });
 }
 

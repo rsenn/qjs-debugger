@@ -31,6 +31,8 @@ export class DAPAdapter {
   #send;
   #seq = 0;
   #threadId;
+  #resuming = 0; /* resume requests (continue/next/...) whose response has not been sent yet */
+  #deferred = []; /* execution-state events held back until then */
 
   /** Optional hooks; assign to handle launch/attach/configurationDone/disconnect/terminate. */
   onLaunch = async () => {};
@@ -65,11 +67,11 @@ export class DAPAdapter {
     const sendTerminated = () => {
       if(terminated) return;
       terminated = true;
-      this.event('terminated', {});
+      this.#stateEvent('terminated', {});
     };
 
     session.on('stopped', ev => {
-      if(ev.reason != 'entry') this.event('stopped', { reason: ev.reason, threadId: this.#threadId, description: ev.description, text: ev.text });
+      if(ev.reason != 'entry') this.#stateEvent('stopped', { reason: ev.reason, threadId: this.#threadId, description: ev.description, text: ev.text });
     });
     session.on('terminated', sendTerminated);
     session.on('aborted', sendTerminated);
@@ -79,6 +81,24 @@ export class DAPAdapter {
   #requireSession() {
     if(!this.#session) throw new Error('DAPAdapter: no active debug session (launch/attach first)');
     return this.#session;
+  }
+
+  /* DAP: the response to continue/next/stepIn/stepOut/pause must precede the 'stopped'/'terminated'
+     it causes, but the engine reports the stop first. A client that sees 'stopped' and then the
+     response of the step that produced it marks the thread running again (stepping then seems to
+     hang until Pause). Hold such events back until the in-flight resume request has been answered. */
+  #stateEvent(event, body) {
+    if(this.#resuming) this.#deferred.push([event, body]);
+    else this.event(event, body);
+  }
+
+  async #resume(request) {
+    this.#resuming++;
+    try {
+      await this.#forward(request, request.arguments ?? {});
+    } finally {
+      if(--this.#resuming == 0) for(const [event, body] of this.#deferred.splice(0)) this.event(event, body);
+    }
   }
 
   event(event, body) {
@@ -115,16 +135,19 @@ export class DAPAdapter {
             supportsTerminateRequest: true,
             exceptionBreakpointFilters: [{ filter: 'exceptions', label: 'All Exceptions' }],
           });
-          this.event('initialized', {});
           break;
 
+        /* per the DAP spec 'initialized' follows launch/attach: only then is there a
+           session to take breakpoints (clients send them as soon as they see the event) */
         case 'launch':
           await this.onLaunch(args);
+          this.event('initialized', {});
           this.response(request, {});
           break;
 
         case 'attach':
           await this.onAttach(args);
+          this.event('initialized', {});
           this.response(request, {});
           break;
 
@@ -206,12 +229,15 @@ export class DAPAdapter {
 
         /* already DAP-shaped on the wire (see protocol.md) — pure passthrough */
         case 'evaluate':
+          await this.#forward(request, args);
+          break;
+
         case 'continue':
         case 'pause':
         case 'next':
         case 'stepIn':
         case 'stepOut':
-          await this.#forward(request, args);
+          await this.#resume(request);
           break;
 
         default:

@@ -1,8 +1,29 @@
 {
-	"folders":
-	[
-		{
-			"path": "."
-		}
-	]
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  // needs ~/.config/sublime-text/Packages/User/qjs_debugger_adapter.py, which registers the "qjs" type
+  "debugger_configurations": [
+    {
+      "type": "qjs",
+      "request": "launch",
+      "name": "Debug examples/orbit.js",
+      "program": "${folder}/examples/orbit.js",
+      "args": [],
+      "cwd": "${folder}",
+      "interpreter": "qjsm",
+      "stopOnEntry": true
+    },
+    {
+      "type": "qjs",
+      "request": "launch",
+      "name": "Debug current file",
+      "program": "${file}",
+      "cwd": "${folder}",
+      "interpreter": "qjsm",
+      "stopOnEntry": true
+    }
+  ]
 }

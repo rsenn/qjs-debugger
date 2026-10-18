@@ -15,9 +15,9 @@
 
 import { setTimeout } from 'os';
 import { exit } from 'std';
-import { CONTEXT_VERSION_MAJOR, CONTEXT_VERSION_MINOR, context, createStandardCursor, KEY_ESCAPE, KEY_F5, KEY_F10, KEY_F11, OPENGL_CORE_PROFILE, OPENGL_FORWARD_COMPAT, OPENGL_PROFILE, poll, RESIZABLE, SAMPLES, Window } from 'glfw';
+import { CONTEXT_VERSION_MAJOR, CONTEXT_VERSION_MINOR, context, createStandardCursor, KEY_ESCAPE, KEY_LEFT_CONTROL, KEY_RIGHT_CONTROL, KEY_F5, KEY_F10, KEY_F11, OPENGL_CORE_PROFILE, OPENGL_FORWARD_COMPAT, OPENGL_PROFILE, poll, RESIZABLE, SAMPLES, Window } from 'glfw';
 import { ANTIALIAS, CreateGL3, DeleteGL3, STENCIL_STROKES } from 'nanovg';
-import { colors, metrics, loadFont } from './theme.js';
+import { colors, metrics, loadFont,changeFontSize } from './theme.js';
 import { contains, fillRect, panel, scrollbarHit, scrollbarOffset, strokeRect, text } from './widgets.js';
 import { CommandLine } from './command-line.js';
 import { ConsolePane } from './console-pane.js';
@@ -29,6 +29,7 @@ import { WatchPane } from './watch-pane.js';
 import * as toolbar from './toolbar.js';
 
 /* glfw literals the module exports no constants for */
+const RELEASE = 0;
 const PRESS = 1;
 const REPEAT = 2;
 const MB_LEFT = 0;
@@ -474,6 +475,17 @@ class GuiApp {
 
       handleScroll(dx, dy) {
         const { x, y } = app.mouse;
+        
+        /* Check if Ctrl is held down during the scroll event */
+        /* Note: if your glfw bindings pass mods or you track state, check it here. 
+           If GLFW scroll callback provides modifiers, use them. Otherwise, 
+           track app.ctrlPressed via handleKey. */
+        if(app.ctrlHeld()) {
+          changeFontSize(app.vg, Math.sign(dy)); /* wheel up: larger */
+          app.layout(); /* pane bounds depend on metrics.rowH */
+          return;
+        }
+
         const lines = -Math.sign(dy) * SCROLL_LINES;
 
         if(app.picker.isOpen) app.picker.scrollBy(lines);
@@ -484,6 +496,10 @@ class GuiApp {
       },
 
       handleKey(key, scancode, action, mods) {
+        // Track Ctrl modifier state globally for shortcuts
+        /* the mods of a Ctrl release event still contain Ctrl, so track the keys themselves */
+        if(key == KEY_LEFT_CONTROL || key == KEY_RIGHT_CONTROL) app.ctrlPressed = action != RELEASE;
+
         if(action != PRESS && action != REPEAT) return;
 
         if(key == KEY_ESCAPE && app.picker.isOpen) app.picker.close();
@@ -499,6 +515,24 @@ class GuiApp {
         app.focusedInput.handleChar(codepoint);
       },
     });
+  }
+
+  /** Ctrl state for events that carry no mods (scroll): polled, falling back to the tracked keys */
+  /** framebuffer pixels per window unit (2 on HiDPI), so nanovg rasterizes glyphs at device resolution */
+  pixelRatio() {
+    try {
+      return this.window.framebufferSize.width / this.window.size.width || 1;
+    } catch(e) {
+      return 1;
+    }
+  }
+
+  ctrlHeld() {
+    try {
+      return this.window.getKey(KEY_LEFT_CONTROL) == PRESS || this.window.getKey(KEY_RIGHT_CONTROL) == PRESS;
+    } catch(e) {
+      return !!this.ctrlPressed;
+    }
   }
 
   layout() {
@@ -560,7 +594,7 @@ class GuiApp {
   render() {
     const { vg, panes } = this;
 
-    vg.BeginFrame(this.width, this.height, 1);
+    vg.BeginFrame(this.width, this.height, this.pixelRatio());
 
     fillRect(vg, 0, 0, this.width, this.height, colors.bg);
 

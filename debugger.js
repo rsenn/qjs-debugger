@@ -136,6 +136,7 @@ export class Debugger {
   completion = true; /* refresh the identifier cache at every stop (tab completion; off for batch/library) */
   collectState = false; /* fill the 'stopped' record with stack + locals (json mode, library) */
   lastError = null; /* message of the failed command, set by #fail(); null when it succeeded */
+  env = null; /* environment for the spawned debuggee (default: our own) */
   exitCode = null; /* exit status of the debuggee after 'exited' (128+N for signal N) */
   lastStop = null; /* the most recent 'stopped' / 'exited' record */
 
@@ -373,7 +374,7 @@ export class Debugger {
       const { child } = StartEngine(args, this.address, {
         listen: !this.listen,
         interpreter: this.interpreter,
-        env: process.env,
+        env: this.env ?? process.env,
         cwd: this.cwd ?? undefined,
       });
       this.child = child;
@@ -728,7 +729,8 @@ export class Debugger {
 
     for(let n = line; n < lines.length; n++) {
       const text = lines[n].trim();
-      if(text && !text.startsWith('//')) return n + 1;
+      /* `let a, b;` without initializers compiles to no code, a breakpoint there never fires */
+      if(text && !text.startsWith('//') && !/^(?:let|var)\s+[\w$]+(?:\s*,\s*[\w$]+)*\s*;?\s*(?:\/\/.*)?$/.test(text)) return n + 1;
     }
     return line;
   }

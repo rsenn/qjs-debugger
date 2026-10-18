@@ -28,7 +28,9 @@ export function text(vg, x, y, str, color = colors.text) {
   vg.FontSize(FONT_SIZE);
   vg.TextAlign(ALIGN_LEFT | ALIGN_TOP);
   vg.FillColor(color);
-  vg.Text(Math.round(x), Math.round(y), str);
+  
+  // Math.floor/Math.round prevents subpixel blur on text baselines
+  vg.Text(Math.floor(x), Math.floor(y), str);
 }
 
 /**
