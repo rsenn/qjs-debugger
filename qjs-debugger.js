@@ -296,7 +296,7 @@ async function StartServer(dbg, { port = 8998 } = {}) {
   dbg.completion = false;
   dbg.echoDisplays = true;
 
-  const publishBreakpoints = () => adapter.broadcast({ type: 'event', event: { type: 'breakpoints', breakpoints: dbg.breakpoints.map(Debugger.breakpointRecord) } });
+  const publishBreakpoints = () => adapter.broadcast({ type: 'event', event: { type: 'breakpoints', breakpoints: dbg.breakpoints.map(Debugger.breakpointRecord), program: dbg.program, sources: dbg.sourceFiles() } });
 
   adapter.oncommand = async (port, line) => {
     if(line.trim()) {

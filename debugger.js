@@ -228,6 +228,7 @@ export class Debugger {
     starti: ['cmdStarti', 'starti -- run and stop at program entry', false],
     break: ['cmdBreak', 'break [FILE:]LINE | FUNCTION | Class.prototype.method [if EXPR] -- set breakpoint (b)', false],
     tbreak: ['cmdTbreak', 'tbreak LOCATION [if EXPR] -- set a one-shot breakpoint', false],
+    condition: ['cmdCondition', 'condition NUM [EXPR] -- stop at breakpoint NUM only when EXPR is true; without EXPR make it unconditional', false],
     watch: ['cmdWatch', 'watch EXPR -- stop when EXPR changes (software watchpoint: checked after every statement)', false],
     delete: ['cmdDelete', 'delete [NUM...] -- delete breakpoints and watchpoints (d)', false],
     catch: ['cmdCatch', 'catch [throw|off] -- stop on exceptions', false],
@@ -936,6 +937,54 @@ export class Debugger {
   cmdTbreak(arg) {
     const [spec, options] = Debugger.parseBreak(arg);
     const breakpoint = this.break(spec, { ...options, temp: true });
+    return breakpoint ? { breakpoint } : undefined;
+  }
+
+  /**
+   * condition: set, change or (empty EXPR) remove the condition of breakpoint NUM.
+   * Conditions live in the debugger (see #nextStop), so the engine is not told.
+   * While stopped, EXPR is tried once in the selected frame: a SyntaxError is
+   * refused; other errors (a variable only the breakpoint's scope has) are accepted.
+   * Returns the breakpoint record, null on failure.
+   */
+  async condition(num, expr = '') {
+    const bp = this.breakpoints.find(b => b.num == num);
+    if(!bp) {
+      this.#fail(`No breakpoint number ${num}.`);
+      return null;
+    }
+
+    expr = expr.trim();
+
+    if(!expr) {
+      delete bp.condition;
+      this.print(`Breakpoint ${bp.num} now unconditional.`);
+    } else {
+      if(this.session && this.stack.length) {
+        try {
+          const r = await this.eval(expr);
+          if(r.exception && /SyntaxError/.test(r.text)) {
+            this.#fail(`Bad breakpoint condition: ${r.text}`);
+            return null;
+          }
+        } catch(e) {}
+      }
+
+      bp.condition = expr;
+      this.print(`Breakpoint ${bp.num}: if ${expr}`);
+    }
+
+    return Debugger.breakpointRecord(bp);
+  }
+
+  async cmdCondition(arg) {
+    const m = arg.match(/^(\d+)(?:\s+(.*))?$/s);
+    if(!m) {
+      this.#fail(arg ? `Bad breakpoint argument: '${arg}'` : 'Argument required (breakpoint number).');
+      return;
+    }
+
+    const breakpoint = await this.condition(+m[1], m[2] ?? '');
     return breakpoint ? { breakpoint } : undefined;
   }
 

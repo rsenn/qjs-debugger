@@ -71,7 +71,7 @@ Result payloads by command:
 | command | keys |
 | --- | --- |
 | `run` `start` `starti` `continue` `next` `step` `finish` `until` | `state` (`stopped`/`exited`), `reason`, `file`, `line`, `function` or `code`, `signal` |
-| `break` `tbreak` | `breakpoint: { num, file, line, spec, condition?, temp? }` |
+| `break` `tbreak` `condition` | `breakpoint: { num, file, line, spec, condition?, temp? }` |
 | `watch` | `watchpoint: { num, expr, value? }` |
 | `delete` | `deleted: [num]` |
 | `print` `eval` `call` `set var` | `expr`, `value` (typed: number, boolean, null, string), `text`, `valueType`; `n` for print; `exception: true` if the expression threw |
@@ -91,6 +91,7 @@ A failed command gives `{"type":"result","command":"print","ok":false,"error":"T
 | command | meaning |
 | --- | --- |
 | `break LOC if EXPR` | stop only when EXPR is true (checked by the debugger, so a false condition costs one round trip) |
+| `condition NUM [EXPR]` | set, change or (no EXPR) remove the condition of breakpoint NUM. While stopped, EXPR is tried once: a SyntaxError is refused, other errors are accepted (the variable may only exist at the breakpoint) |
 | `tbreak LOC [if EXPR]` | one-shot breakpoint |
 | `watch EXPR` | software watchpoint: while one exists, `continue` runs statement by statement (`next`) and stops when EXPR's text changes. Slow; EXPR is evaluated in the innermost frame |
 | `until [LOC]` | run to LOC; without it, `next` until the line is past the current one (leaves loops) |
@@ -125,6 +126,7 @@ const end = await dbg.continue();            // { type: 'exited', code, signal }
 | --- | --- |
 | `new Debugger({ interpreter, address, listen, transport, quiet })` | `quiet` silences the text output; records still arrive through `on()` |
 | `launch(program, args?, { run? })` | start and stop at entry (`run: true`: continue to the first stop or exit); returns the record |
+| `condition(num, expr?)` | async; set or (no expr) clear a breakpoint's condition; returns the record, `null` on failure |
 | `break(spec, { condition?, temp? })`, `tbreak(spec)` | returns the breakpoint record, `null` if the location is unknown (`dbg.lastError` has the message) |
 | `continue()` `next()` `step()` `finish()` `until(loc?)` | resume; resolve with the next `stopped` or `exited` record |
 | `eval(expr)` | `{ value, text, type, exception? }`; throws if the program is not stopped |

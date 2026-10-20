@@ -26,7 +26,7 @@ function debugLog(level, arrow, color, label, ...args) {
 const statusEl = document.getElementById('status');
 const statusBadge = document.getElementById('statusBadge');
 const bannerEl = document.getElementById('executionBanner');
-const filenameEl = document.getElementById('activeFilename');
+const tabsEl = document.getElementById('fileTabs');
 const replLogEl = document.getElementById('replLog');
 const filterEl = document.getElementById('varFilter');
 const sourceEl = document.getElementById('source');
@@ -69,14 +69,35 @@ function highlightLine(line) {
    gutter just issues `break`/`delete`, and the table comes back as an event */
 let bpList = [];
 
-function toggleBreakpoint(filename, line) {
+function toggleBreakpoint(filename, line, e) {
   const bp = bpList.find(b => b.file === filename && b.line === line);
+
+  /* shift-click: edit the condition on the command line */
+  if(e?.shiftKey) {
+    cmdInput.value = bp ? `condition ${bp.num} ${bp.condition ?? ''}` : `break ${filename}:${line} if `;
+    cmdInput.focus();
+    return;
+  }
+
   command(bp ? `delete ${bp.num}` : `break ${filename}:${line}`, false);
 }
 
-function applyBreakpoints(list) {
-  bpList = list;
-  for(const row of sourceEl.children) row.classList.toggle('breakpoint', bpList.some(b => b.file === curFile && b.line === Number(row.dataset.line)));
+function markBreakpoint(row, line) {
+  const bp = bpList.find(b => b.file === curFile && b.line === line);
+  row.classList.toggle('breakpoint', !!bp);
+  row.classList.toggle('conditional', !!bp?.condition);
+  row.title = bp?.condition ? `if ${bp.condition}` : '';
+}
+
+function applyState({ breakpoints, program: main, sources: files }) {
+  if(main && !program) {
+    program = main;
+    if(!curFile) openFile(program);
+  }
+  if(files) sources = files;
+  renderTabs();
+  bpList = breakpoints;
+  for(const row of sourceEl.children) markBreakpoint(row, Number(row.dataset.line));
 }
 
 let ws,
@@ -112,7 +133,7 @@ function onFrame(json) {
     pending.delete(msg.request_seq);
   } else if(msg.type === 'event') {
     if(msg.event.type === 'breakpoints') {
-      applyBreakpoints(msg.event.breakpoints);
+      applyState(msg.event);
     } else if(msg.event.type === 'StoppedEvent') {
       setStatus(`Paused (${msg.event.reason})`, 'paused');
       bannerEl.querySelector('#pausedReason').textContent = msg.event.reason ?? 'breakpoint';
@@ -167,33 +188,77 @@ function onOutput(channel, text) {
   outputEl.scrollTop = outputEl.scrollHeight;
 }
 
+/* file tabs: the main program, every file the debuggee stopped in or you opened,
+   plus a picker with all the scripts the debugger knows about */
+const openTabs = [];
+let program = null;
+let sources = [];
+let stop = null; /* { file, line } of the current stop */
+
+const baseName = f => f.slice(f.lastIndexOf('/') + 1);
+const openFile = f => showSource(f, stop?.file === f ? stop.line : null);
+
+function renderTabs() {
+  tabsEl.innerHTML = '';
+
+  for(const f of openTabs) {
+    const tab = document.createElement('div');
+    tab.className = `ftab${f === curFile ? ' active' : ''}`;
+    tab.title = f;
+    tab.textContent = baseName(f);
+    if(f === program) tab.classList.add('main');
+    tab.addEventListener('click', () => openFile(f));
+    tabsEl.appendChild(tab);
+  }
+
+  const picker = document.createElement('select');
+  picker.id = 'filePicker';
+  picker.title = 'Open a source file';
+  picker.add(new Option('Open file…', ''));
+  for(const f of new Set([program, ...sources].filter(Boolean))) picker.add(new Option(f === program ? `${f}  (main)` : f, f));
+  picker.addEventListener('change', () => picker.value && openFile(picker.value));
+  tabsEl.appendChild(picker);
+}
+
+/* one fetch per file at a time; an empty or failed answer is shown but not cached */
+const inflight = new Map();
+
+function loadSource(filename) {
+  const cached = sourceCache.get(filename);
+  if(cached !== undefined) return Promise.resolve(cached);
+
+  if(!inflight.has(filename))
+    inflight.set(
+      filename,
+      (async () => {
+        try {
+          const res = await fetch(`/source?path=${encodeURIComponent(filename)}`);
+          const text = res.ok ? await res.text() : `(HTTP ${res.status} fetching ${filename})`;
+          if(res.ok && text) sourceCache.set(filename, text);
+          return text || `(empty answer for ${filename})`;
+        } catch(e) {
+          return `(could not load ${filename}: ${e})`;
+        } finally {
+          inflight.delete(filename);
+        }
+      })(),
+    );
+
+  return inflight.get(filename);
+}
+
 async function showSource(filename, line) {
   if(!filename) {
     sourceEl.innerHTML = '<div class="empty">(no source info for this frame)</div>';
-    bannerEl.classList.add('hidden');
     return;
   }
 
-  let text = sourceCache.get(filename);
-
-  if(text === undefined) {
-    const url = `/source?path=${encodeURIComponent(filename)}`;
-    try {
-      const res = await fetch(url);
-      text = res.ok ? await res.text() : `(HTTP ${res.status} fetching ${filename})`;
-    } catch(e) {
-      text = `(could not load ${filename}: ${e})`;
-    }
-    sourceCache.set(filename, text);
-  }
+  const text = await loadSource(filename);
 
   sourceEl.innerHTML = '';
-  filenameEl.textContent = curFile = filename;
-
-  if(line) {
-    document.getElementById('pausedLocation').textContent = `${filename}:${line}`;
-    bannerEl.classList.remove('hidden');
-  } else bannerEl.classList.add('hidden');
+  curFile = filename;
+  if(!openTabs.includes(filename)) openTabs.push(filename);
+  renderTabs();
 
   text.split('\n').forEach((codeLine, i) => {
     const div = document.createElement('div');
@@ -201,20 +266,20 @@ async function showSource(filename, line) {
     div.dataset.line = i + 1;
     const lineNo = i + 1;
     if(lineNo === line) div.classList.add('current');
-    if(bpList.some(b => b.file === filename && b.line === lineNo)) div.classList.add('breakpoint');
 
     const no = document.createElement('span');
     no.className = 'gutter';
     const dot = document.createElement('span');
     dot.className = 'bp';
     no.append(dot, String(lineNo));
-    no.addEventListener('click', () => toggleBreakpoint(filename, lineNo));
+    no.addEventListener('click', e => toggleBreakpoint(filename, lineNo, e));
 
     const code = document.createElement('span');
     code.className = 'code';
     code.innerHTML = highlightLine(codeLine);
 
     div.append(no, code);
+    markBreakpoint(div, lineNo);
     sourceEl.appendChild(div);
   });
 
@@ -229,15 +294,24 @@ async function refresh() {
   if(!frame) return;
 
   currentFrameId = frame.id;
+  stop = { file: frame.filename, line: frame.line };
+  if(frame.line) {
+    document.getElementById('pausedLocation').textContent = `${frame.filename}:${frame.line}`;
+    bannerEl.classList.remove('hidden');
+  }
   await showSource(frame.filename, frame.line);
 
-  scopeData = [];
+  /* refreshes can overlap (stop event + connect query): collect locally, drop stale results */
+  const mine = ++refreshSeq;
+  const data = [];
 
   for(const scope of await request('scopes', { frameId: frame.id })) {
     if(scope.expensive) continue;
-    scopeData.push({ name: scope.name, vars: await request('variables', { variablesReference: scope.reference }) });
+    data.push({ name: scope.name, vars: await request('variables', { variablesReference: scope.reference }) });
   }
 
+  if(mine !== refreshSeq) return;
+  scopeData = data;
   renderVars();
 }
 
@@ -293,6 +367,7 @@ function renderVars() {
 }
 
 let scopeData = [];
+let refreshSeq = 0;
 filterEl.addEventListener('input', renderVars);
 
 async function evaluate(expression, frameId = currentFrameId) {
@@ -388,7 +463,7 @@ ws.onopen = async () => {
      StoppedEvent will come: query the current stop instead */
   const timeout = new Promise(resolve => setTimeout(resolve, 2000, null));
   if(await Promise.race([request('stackTrace').catch(() => null), timeout])) {
-    setStatus('Paused (entry)', 'paused');
+    setStatus('Paused', 'paused');
     refresh();
   }
 };
