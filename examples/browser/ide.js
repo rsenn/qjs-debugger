@@ -1,5 +1,5 @@
 /**
- * Talks to server.js over the WebSocket at /debug. Two kinds of WS message
+ * Web client for `qjs-debugger -m server`: talks over the WebSocket at /debug. Two kinds of WS message
  * arrive:
  *   - text messages carry debug-wire JSON, framed the same way as the raw
  *     TCP side ("%08x '\n' <json> '\n'", the 8 hex digits counting json's
@@ -34,7 +34,7 @@ const varsEl = document.getElementById('vars');
 const outputEl = document.getElementById('output');
 const evalInput = document.getElementById('evalInput');
 const sourceCache = new Map();
-const breakpoints = new Map(); // filename -> Set<line>
+let curFile = null;
 
 const KEYWORDS =
   'async|await|break|case|catch|class|const|continue|debugger|default|delete|do|else|enum|export|extends|finally|for|from|function|if|import|in|instanceof|let|new|of|return|static|super|switch|this|throw|try|typeof|var|void|while|with|yield';
@@ -65,13 +65,18 @@ function highlightLine(line) {
   });
 }
 
-function toggleBreakpoint(filename, line, div) {
-  let set = breakpoints.get(filename);
-  if(!set) breakpoints.set(filename, (set = new Set()));
-  if(set.has(line)) set.delete(line);
-  else set.add(line);
-  div.classList.toggle('breakpoint', set.has(line));
-  ws.send(JSON.stringify({ type: 'breakpoints', breakpoints: { path: filename, breakpoints: [...set].map(line => ({ line })) } }));
+/* breakpoints are owned by the server-side Debugger (numbered, gdb-style): the
+   gutter just issues `break`/`delete`, and the table comes back as an event */
+let bpList = [];
+
+function toggleBreakpoint(filename, line) {
+  const bp = bpList.find(b => b.file === filename && b.line === line);
+  command(bp ? `delete ${bp.num}` : `break ${filename}:${line}`, false);
+}
+
+function applyBreakpoints(list) {
+  bpList = list;
+  for(const row of sourceEl.children) row.classList.toggle('breakpoint', bpList.some(b => b.file === curFile && b.line === Number(row.dataset.line)));
 }
 
 let ws,
@@ -100,11 +105,15 @@ function onFrame(json) {
     return;
   }
   debugLog(2, '🡄', 'green', 'onFrame', msg);
-  if(msg.type === 'response') {
+  if(msg.type === 'console') {
+    consoleLine('dbg', msg.text);
+  } else if(msg.type === 'response') {
     pending.get(msg.request_seq)?.(msg.body);
     pending.delete(msg.request_seq);
   } else if(msg.type === 'event') {
-    if(msg.event.type === 'StoppedEvent') {
+    if(msg.event.type === 'breakpoints') {
+      applyBreakpoints(msg.event.breakpoints);
+    } else if(msg.event.type === 'StoppedEvent') {
       setStatus(`Paused (${msg.event.reason})`, 'paused');
       bannerEl.querySelector('#pausedReason').textContent = msg.event.reason ?? 'breakpoint';
       refresh();
@@ -114,6 +123,39 @@ function onFrame(json) {
     }
   }
 }
+
+function consoleLine(cls, text) {
+  const line = document.createElement('div');
+  line.className = cls;
+  line.textContent = text;
+  outputEl.appendChild(line);
+  outputEl.scrollTop = outputEl.scrollHeight;
+}
+
+/* one gdb-style command line, run by the server's Debugger interpreter */
+function command(line, echo = true) {
+  if(echo) consoleLine('cmd', `(qjs) ${line}`);
+  ws.send(JSON.stringify({ type: 'command', line }));
+}
+
+const history = [];
+let historyPos = 0;
+const cmdInput = document.getElementById('cmdInput');
+
+cmdInput.addEventListener('keydown', e => {
+  if(e.key === 'Enter') {
+    const line = cmdInput.value.trim();
+    if(line && history.at(-1) !== line) history.push(line);
+    historyPos = history.length;
+    /* an empty line repeats the last command, like gdb */
+    command(line || history.at(-1) || 'help');
+    cmdInput.value = '';
+  } else if(e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    historyPos = Math.max(0, Math.min(history.length, historyPos + (e.key === 'ArrowUp' ? -1 : 1)));
+    cmdInput.value = history[historyPos] ?? '';
+    e.preventDefault();
+  }
+});
 
 function onOutput(channel, text) {
   const stdin = channel === 3;
@@ -146,7 +188,7 @@ async function showSource(filename, line) {
   }
 
   sourceEl.innerHTML = '';
-  filenameEl.textContent = filename;
+  filenameEl.textContent = curFile = filename;
 
   if(line) {
     document.getElementById('pausedLocation').textContent = `${filename}:${line}`;
@@ -156,16 +198,17 @@ async function showSource(filename, line) {
   text.split('\n').forEach((codeLine, i) => {
     const div = document.createElement('div');
     div.className = 'row';
+    div.dataset.line = i + 1;
     const lineNo = i + 1;
     if(lineNo === line) div.classList.add('current');
-    if(breakpoints.get(filename)?.has(lineNo)) div.classList.add('breakpoint');
+    if(bpList.some(b => b.file === filename && b.line === lineNo)) div.classList.add('breakpoint');
 
     const no = document.createElement('span');
     no.className = 'gutter';
     const dot = document.createElement('span');
     dot.className = 'bp';
     no.append(dot, String(lineNo));
-    no.addEventListener('click', () => toggleBreakpoint(filename, lineNo, div));
+    no.addEventListener('click', () => toggleBreakpoint(filename, lineNo));
 
     const code = document.createElement('span');
     code.className = 'code';
@@ -180,39 +223,10 @@ async function showSource(filename, line) {
 
 let currentFrameId = 0;
 
-/* like gdb's `start`: on the first (entry) stop, run to main() if the main
-   script has one; otherwise stay at the first statement */
-let started = false;
-
-async function findMain(filename) {
-  if(!sourceCache.has(filename)) await showSource(filename);
-  const lines = (sourceCache.get(filename) ?? '').split('\n');
-  const i = lines.findIndex(l => /^\s*(?:async\s+)?function\s+main\s*\(/.test(l) && /\{\s*$/.test(l));
-  if(i < 0) return 0;
-  for(let n = i + 1; n < lines.length; n++) {
-    const t = lines[n].trim();
-    if(t && !t.startsWith('//')) return n + 1;
-  }
-  return 0;
-}
-
 async function refresh() {
   const frames = await request('stackTrace');
   const frame = frames?.[0];
   if(!frame) return;
-
-  if(!started) {
-    started = true;
-    const line = frame.filename && (await findMain(frame.filename));
-    if(line) {
-      const set = new Set([line]);
-      breakpoints.set(frame.filename, set);
-      ws.send(JSON.stringify({ type: 'breakpoints', breakpoints: { path: frame.filename, breakpoints: [{ line }] } }));
-      request('continue');
-      setStatus(`Running to main() at ${frame.filename}:${line}…`, 'connected');
-      return;
-    }
-  }
 
   currentFrameId = frame.id;
   await showSource(frame.filename, frame.line);
@@ -326,10 +340,11 @@ document.getElementById('evalRun').addEventListener('click', runEval);
 evalInput.addEventListener('keydown', e => e.key === 'Enter' && runEval());
 
 const keyMap = { F5: 'continue', F9: 'pause', F10: 'next', F11: 'stepIn', F12: 'stepOut' };
+const commandOf = { continue: 'continue', pause: 'interrupt', next: 'next', stepIn: 'step', stepOut: 'finish' };
 
 for(const id of ['continue', 'next', 'stepIn', 'stepOut', 'pause'])
   document.getElementById(id).addEventListener('click', () => {
-    request(id);
+    command(commandOf[id]);
     if(id === 'continue') {
       setStatus('Running…', 'connected');
       bannerEl.classList.add('hidden');
@@ -340,7 +355,7 @@ document.addEventListener('keydown', e => {
   const id = keyMap[e.key];
   if(id) {
     e.preventDefault();
-    request(id);
+    command(commandOf[id]);
   }
 });
 
@@ -367,6 +382,7 @@ function decodeFrames() {
 
 ws.onopen = async () => {
   setStatus('Connected — waiting for a debug target…', 'connected');
+  ws.send(JSON.stringify({ type: 'command', line: '' })); /* publishes the breakpoint table */
 
   /* the engine already stopped at entry before this page connected, so no
      StoppedEvent will come: query the current stop instead */

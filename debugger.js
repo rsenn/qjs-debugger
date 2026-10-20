@@ -429,6 +429,36 @@ export class Debugger {
     return entry;
   }
 
+  /**
+   * adopt: take over a debug session somebody else owns (the server adapter's),
+   * as if launchEngine() had connected it: the command interpreter works on the
+   * shared engine while the owner keeps routing requests and events.
+   * Waits for the entry stop; with runToMain, runs on to main() like `start`.
+   */
+  async adopt(session, { runToMain = false } = {}) {
+    this.#sourceCache.clear();
+    this.exitCode = null;
+    this.child = { external: true };
+    this.session = session;
+    this.#closed = new Promise(resolve => session.on('aborted', () => resolve({ closed: true })));
+
+    const entry = await Promise.race([session.waitEvent('stopped'), this.#closed]);
+    if(entry?.closed) return this.#terminated();
+
+    if(this.stopOnException) session.stopOnException(true);
+    for(const file of new Set(this.breakpoints.map(b => b.file))) this.#sendBreakpoints(file);
+
+    const loc = runToMain && this.program && this.#findFunctionIn(this.program, 'main');
+    if(!loc) return this.#onStopped(entry, null, false);
+
+    this.stack = await session.stackTrace();
+    const bp = { num: this.nextBpNum++, ...loc, spec: 'main', temp: true };
+    this.breakpoints.push(bp);
+    this.print(`Temporary breakpoint ${bp.num} at ${bp.file}:${bp.line}`);
+    this.#sendBreakpoints(bp.file);
+    return this.#resume('continue');
+  }
+
   /* signal name -> number, for the 128+N exit status of a killed debuggee */
   static signals = { SIGHUP: 1, SIGINT: 2, SIGQUIT: 3, SIGILL: 4, SIGABRT: 6, SIGBUS: 7, SIGFPE: 8, SIGKILL: 9, SIGSEGV: 11, SIGPIPE: 13, SIGALRM: 14, SIGTERM: 15 };
 

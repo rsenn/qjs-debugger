@@ -257,7 +257,7 @@ function StartREPL(dbg) {
  *     header comment), so no separate mount is needed per encoding.
  *   - qjs-lws's examples/debugger/demo.html UI: static files, GET
  *     /source?path=... for absolute-path sources, and the WS 'browser'
- *     protocol at /debug demo.js expects.
+ *     protocol at /debug ide.js expects.
  *   - when dbg.listen (true, default), the engine's own connection: lws's
  *     listen-fallback (LWS_SERVER_OPTION_FALLBACK_TO_APPLY_LISTEN_ACCEPT_CONFIG
  *     + listenAcceptRole/listenAcceptProtocol) lets the same port both
@@ -284,10 +284,36 @@ async function StartServer(dbg, { port = 8998 } = {}) {
   const adapter = new DebuggerServerAdapter({ timeout: 0 });
   adapter.onstatus = msg => (stdout.puts(`[server] ${msg}\n`), stdout.flush());
 
-  /* demo.js connects with `new WebSocket(url, 'browser')` — an explicit
+  /* ide.js connects with `new WebSocket(url, 'browser')` — an explicit
      Sec-WebSocket-Protocol header, required for mount-based dispatch to
      work correctly on a context that also serves other protocols (see
      connector-lws.js's header comment) — so name it to match. */
+  /* the gdb-style interpreter works on the adapter's engine session; its text
+     output goes to every client ('console' messages), the breakpoint table
+     is published after each command so the clients' gutters follow it */
+  dbg.print = (...args) => adapter.broadcast({ type: 'console', text: args.join(' ') });
+  dbg.printRaw = () => {};
+  dbg.completion = false;
+  dbg.echoDisplays = true;
+
+  const publishBreakpoints = () => adapter.broadcast({ type: 'event', event: { type: 'breakpoints', breakpoints: dbg.breakpoints.map(Debugger.breakpointRecord) } });
+
+  adapter.oncommand = async (port, line) => {
+    if(line.trim()) {
+      try {
+        await dbg.execute(line.trim());
+      } catch(err) {
+        dbg.print(`${err?.message ?? err}`);
+      }
+    }
+    publishBreakpoints();
+  };
+
+  const attach = connection => {
+    const session = adapter.attachEngine(connection);
+    dbg.adopt(session, { runToMain: true }).then(publishBreakpoints, err => dbg.print(`adopt: ${err?.message ?? err}`));
+  };
+
   const browserConnector = LWSConnector(adapter, { mode: 'browser', name: 'browser' });
   const demoDir = join(dirname(process.argv[1] ?? '.'), 'examples', 'browser');
 
@@ -323,7 +349,7 @@ async function StartServer(dbg, { port = 8998 } = {}) {
   const browserMounts = [
     { mountpoint: '/debug', protocol: 'browser', originProtocol: LWSMPRO_NO_MOUNT },
     { mountpoint: '/source', protocol: 'source', originProtocol: LWSMPRO_CALLBACK },
-    { mountpoint: '/', origin: demoDir, def: 'demo.html', originProtocol: LWSMPRO_FILE, protocol: 'http' },
+    { mountpoint: '/', origin: demoDir, def: 'index.html', originProtocol: LWSMPRO_FILE, protocol: 'http' },
   ];
   const protocols = [
     LWSConnector(adapter, { mode: 'json', name: 'debugger' }),
@@ -343,7 +369,7 @@ async function StartServer(dbg, { port = 8998 } = {}) {
       listenAcceptRole: 'raw-skt',
       listenAcceptProtocol: 'engine',
       mounts: browserMounts,
-      protocols: [...protocols, { name: 'engine', ...LWSEngineConnector({ onConnect: connection => adapter.attachEngine(connection) }) }],
+      protocols: [...protocols, { name: 'engine', ...LWSEngineConnector({ onConnect: attach }) }],
     });
 
     const child = SubprocessStream(['/usr/bin/env', `QUICKJS_DEBUG_ADDRESS=127.0.0.1:${port}`, dbg.interpreter, dbg.program, ...dbg.programArgs]);
@@ -356,7 +382,7 @@ async function StartServer(dbg, { port = 8998 } = {}) {
       stdio: 'inherit',
     });
     const connection = await EngineConnection.connect(dbg.address, { transport: dbg.transport });
-    adapter.attachEngine(connection);
+    attach(connection);
 
     createServer({ port, vhostName: 'localhost', mounts: browserMounts, protocols });
   }

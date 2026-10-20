@@ -28,6 +28,7 @@ export class DebuggerServerAdapter {
   session = null; /* DebugSession over the engine connection */
   child = null; /* spawned interpreter, if we launched it */
 
+  oncommand = null; /* async (port, line) => {} — runs one command line (the Debugger's interpreter) */
   onstatus = msg => console.log('DebuggerServerAdapter:', msg);
 
   /**
@@ -203,6 +204,12 @@ export class DebuggerServerAdapter {
         }
         break;
       }
+
+      /* ---- a gdb-style command line, run by the host's interpreter ---- */
+      case 'command':
+        if(this.oncommand) await this.oncommand(port, String(msg.line ?? ''));
+        else port.sendMessage({ type: 'error', command: 'command', message: 'no command interpreter' });
+        break;
 
       /* ---- seq-less engine messages: pass through verbatim ---- */
       case 'breakpoints':

@@ -113,7 +113,7 @@ in its default listening mode).
 `server` mode serves qjs-lws's
 [examples/debugger](https://github.com/rsenn/qjs-lws) browser UI
 (copied to `examples/browser/`) — no separate server needed, and no
-changes to `demo.html`/`demo.js`. HTTP, WS and the engine's own TCP
+changes to `index.html`/`ide.js`. HTTP, WS and the engine's own TCP
 connection all share the one port:
 
     qjs-debugger -m server script.js

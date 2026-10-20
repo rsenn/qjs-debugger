@@ -34,7 +34,7 @@ install(FILES gui/main.js gui/theme.js gui/widgets.js gui/toolbar.js gui/source-
 
 # server mode's browser UI (qjs-lws examples/debugger/demo.{html,js}, served
 # statically at path 'examples/browser' relative to the installed script)
-install(FILES examples/browser/demo.html examples/browser/demo.js DESTINATION bin/examples/browser)
+install(FILES examples/browser/index.html examples/browser/ide.js DESTINATION bin/examples/browser)
 
 # VS Code extension package (qjs-debugger-<version>.vsix), built on demand via
 # `cmake --build build/native --target vsix` (or `ninja vsix`). Requires

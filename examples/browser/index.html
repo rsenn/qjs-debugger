@@ -252,22 +252,24 @@
   }
   #output .stderr { color: var(--rose); }
   #output .stdout { color: #d1d5db; }
+  #output .dbg { color: #d1d5db; }
+  #output .cmd { color: var(--blue); font-weight: 600; }
   .log-in { color: var(--blue); font-weight: 600; }
   .log-out { color: var(--emerald); padding-left: 12px; border-left: 1px solid rgba(16,185,129,.3); margin: 2px 0 6px; }
   .log-err { color: var(--rose); padding-left: 12px; border-left: 1px solid rgba(244,63,94,.3); margin: 2px 0 6px; }
 
-  #replPrompt {
+  #cmdPrompt, #replPrompt {
     display: flex; align-items: center; gap: 8px;
     padding: 8px;
     background: var(--card);
     border-top: 1px solid var(--border);
   }
-  #replPrompt b { color: var(--blue); font: 700 12px var(--mono); }
-  #evalInput {
+  #cmdPrompt b, #replPrompt b { color: var(--blue); font: 700 12px var(--mono); }
+  #cmdInput, #evalInput {
     flex: 1; background: transparent; border: 0; outline: none;
     font: 12px var(--mono); color: var(--text-bright);
   }
-  #evalInput::placeholder, #varFilter::placeholder { color: var(--text-muted); }
+  #cmdInput::placeholder, #evalInput::placeholder, #varFilter::placeholder { color: var(--text-muted); }
   #evalRun {
     padding: 4px 10px; border-radius: 4px;
     background: #2563eb; color: #fff;
@@ -329,6 +331,10 @@
       </div>
       <div id="consoleView" class="view">
         <div id="output"></div>
+        <div id="cmdPrompt" class="prompt">
+          <b>(qjs)</b>
+          <input id="cmdInput" type="text" placeholder="gdb command: break, next, bt, print … (help)" autocomplete="off" spellcheck="false">
+        </div>
       </div>
       <div id="replView" class="view hidden">
         <div id="replLog"></div>
@@ -342,6 +348,6 @@
   </aside>
 </main>
 
-<script src="demo.js"></script>
+<script src="ide.js"></script>
 </body>
 </html>

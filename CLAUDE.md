@@ -25,7 +25,7 @@ cmake --build build/native -j$(nproc)
 cmake --install build/native
 ```
 
-This directory's `CMakeLists.txt` just installs the JS files: `qjs-debugger.js` → `bin/qjs-debugger` (+ `qjsm-debugger` symlink), the support modules (`debugger.js`, `codec.js`, `session.js`, `engine-connection.js`, `transport.js`, `server-adapter.js`, `vscode-dap.js`, `connector-lws.js`) → `bin/`, `gui/*.js` → `bin/gui/`, and the browser demo → `bin/examples/browser/`. Adding a new support module or GUI pane means adding it to the relevant `install(FILES …)` list here too.
+This directory's `CMakeLists.txt` just installs the JS files: `qjs-debugger.js` → `bin/qjs-debugger` (+ `qjsm-debugger` symlink), the support modules (`debugger.js`, `codec.js`, `session.js`, `engine-connection.js`, `transport.js`, `server-adapter.js`, `vscode-dap.js`, `connector-lws.js`) → `bin/`, `gui/*.js` → `bin/gui/`, and the browser client (`examples/browser/index.html`, `ide.js`) → `bin/examples/browser/`. Adding a new support module or GUI pane means adding it to the relevant `install(FILES …)` list here too.
 
 Running:
 ```
@@ -51,7 +51,7 @@ Small modules with strict layering; every class talks to its neighbors through a
 - `qjs-debugger.js` — the CLI: argument parsing, REPL mode, batch mode (`--batch`/`--plain`/`--json`), server and dap modes.
 - `vscode-dap.js` — DAP adapter (`-m dap`) wrapping the same `Debugger`/`EngineConnection` for VS Code.
 - `gui/` — immediate-mode MVC panes on nanovg/glfw (`-m gui`); see `gui/PLAN.md` for the full design and the event-loop constraint below. `imgui/` is an unrelated/unused prior attempt — don't touch it for GUI work.
-- `server-adapter.js`, `connector-lws.js`, `connector-qjsnet.js`, `client.js` — N-clients-to-1-engine fan-out and WebSocket connectors for `-m server`, plus the browser demo client under `examples/browser/`.
+- `server-adapter.js`, `connector-lws.js`, `connector-qjsnet.js`, `client.js` — N-clients-to-1-engine fan-out and WebSocket connectors for `-m server`, plus the browser client under `examples/browser/`.
 
 The three load-bearing contracts (read this before changing any of the above):
 - a **transport** is `{ [Symbol.asyncIterator](), send(data), close() }` with static `connect(address, options)` / `accept(address, options)` (accept fires `options.listening()` once bound; the engine's outgoing connect does not retry).
