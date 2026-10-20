@@ -2,260 +2,345 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>qjs-lws Debugger IDE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuickJS Debugger IDE</title>
 <style>
   :root {
-    --bg-base: #1e1e1e;
-    --bg-surface: #252526;
-    --bg-elevated: #2d2d2d;
-    --border-color: #333333;
-    --border-subtle: #404040;
-    --text-main: #cccccc;
-    --text-muted: #858585;
-    --text-bright: #ffffff;
-    --accent-blue: #007acc;
-    --accent-blue-hover: #1c97ea;
-    --accent-red: #f14c4c;
-    --accent-yellow: #cca70a;
-    --accent-green: #4ec9b0;
-    --current-line: rgba(255, 229, 143, 0.12);
+    --bg: #18181b;
+    --sidebar: #111113;
+    --card: #1f1f23;
+    --border: #27272a;
+    --hover: #2a2a2e;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
+    --current-line: #2e2a14;
+    --current-gutter: #eab308;
+    --text: #d1d5db;
+    --text-bright: #f3f4f6;
+    --text-muted: #6b7280;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --red: #ef4444;
+    --rose: #fb7185;
+    --emerald: #34d399;
+    --mono: "JetBrains Mono", "Fira Code", Menlo, Monaco, Consolas, monospace;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { height: 100%; overflow: hidden; }
   body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-family: Inter, system-ui, sans-serif;
     font-size: 13px;
-    background-color: var(--bg-base);
-    color: var(--text-main);
+    background: var(--bg);
+    color: var(--text);
     display: flex;
     flex-direction: column;
+    -webkit-font-smoothing: antialiased;
   }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .hidden { display: none !important; }
 
-  /* Header / Toolbar */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: var(--sidebar); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+  /* Top bar */
   header {
-    background-color: var(--bg-surface);
-    border-bottom: 1px solid var(--border-color);
-    padding: 0.5rem 1rem;
+    height: 48px;
+    flex-shrink: 0;
+    background: var(--sidebar);
+    border-bottom: 1px solid var(--border);
+    padding: 0 1rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 1rem;
   }
-  h1 { font-size: 14px; font-weight: 600; color: var(--text-bright); letter-spacing: 0.3px; }
-  #status { font-size: 12px; color: var(--text-muted); font-style: italic; }
+  .brand { display: flex; align-items: center; gap: 1rem; }
+  .logo { font-weight: 700; font-size: 14px; letter-spacing: .03em; color: var(--text-bright); }
+  .logo em {
+    font: normal 12px var(--mono);
+    color: var(--accent);
+    background: rgba(59,130,246,.1);
+    border: 1px solid rgba(59,130,246,.2);
+    border-radius: 4px;
+    padding: 2px 6px;
+    margin-left: 4px;
+  }
+  .sep { width: 1px; height: 16px; background: var(--border); }
 
+  #statusBadge {
+    display: flex; align-items: center; gap: .5rem;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid;
+    font-size: 12px; font-weight: 500;
+  }
+  #statusBadge .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  #statusBadge.connecting { color: var(--amber); background: rgba(245,158,11,.1); border-color: rgba(245,158,11,.2); }
+  #statusBadge.connected  { color: var(--emerald); background: rgba(16,185,129,.1); border-color: rgba(16,185,129,.2); }
+  #statusBadge.paused     { color: #facc15; background: rgba(234,179,8,.1); border-color: rgba(234,179,8,.2); }
+  #statusBadge.error      { color: var(--rose); background: rgba(244,63,94,.1); border-color: rgba(244,63,94,.2); }
+  #statusBadge.connecting .dot, #statusBadge.paused .dot { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .4; } }
+
+  /* Execution controls */
   #toolbar {
-    background-color: var(--bg-surface);
-    border-bottom: 1px solid var(--border-color);
-    padding: 0.4rem 1rem;
-    display: flex;
-    gap: 0.35rem;
+    display: flex; align-items: center; gap: 4px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.3);
   }
-  button {
-    background-color: var(--bg-elevated);
-    color: var(--text-main);
-    border: 1px solid var(--border-subtle);
-    padding: 0.3rem 0.7rem;
-    border-radius: 3px;
-    font-size: 12px;
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+  #toolbar .sep { margin: 0 2px; }
+  #toolbar button {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font: 12px var(--mono);
+    transition: background .15s, color .15s;
   }
-  button:hover { background-color: var(--border-subtle); color: var(--text-bright); border-color: var(--text-muted); }
-  button:active { background-color: var(--accent-blue); border-color: var(--accent-blue); }
+  #toolbar button:hover { background: var(--hover); }
+  #toolbar button:active { background: var(--accent); color: #fff; }
+  #toolbar button i { font-style: normal; font-size: 14px; line-height: 1; }
+  #toolbar button kbd { font: 10px var(--mono); color: var(--text-muted); margin-left: 2px; }
+  #continue { color: var(--green); }
+  #pause { color: var(--amber); }
+  #next, #stepIn, #stepOut { color: var(--blue); }
 
-  /* Main Workspace */
-  #panes {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    gap: 1px;
-    background-color: var(--border-color);
-  }
-  .pane-column {
-    background-color: var(--bg-base);
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    overflow: hidden;
-  }
-  #sourceCol { flex: 2.2; }
-  #varsCol { flex: 1.2; border-left: 1px solid var(--border-color); }
-
-  .pane-header {
-    background-color: var(--bg-surface);
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--text-muted);
-    padding: 0.4rem 0.8rem;
-    border-bottom: 1px solid var(--border-color);
+  .target {
+    font: 12px var(--mono);
+    color: #9ca3af;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 4px 10px;
   }
 
-  /* Source Viewer */
+  /* Workspace */
+  main { flex: 1; display: flex; min-height: 0; }
+  #editor {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column;
+    background: var(--bg);
+    border-right: 1px solid var(--border);
+  }
+  #fileTabs {
+    height: 36px; flex-shrink: 0;
+    background: var(--sidebar);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-end;
+    padding: 0 8px;
+  }
+  #tabActive {
+    display: flex; align-items: center; gap: 8px;
+    padding: 6px 12px;
+    background: var(--bg);
+    color: #e5e7eb;
+    font: 12px var(--mono);
+    border: 1px solid var(--border);
+    border-top: 2px solid var(--accent);
+    border-bottom: 0;
+    border-radius: 4px 4px 0 0;
+  }
+  #tabActive::before { content: "{ }"; color: #eab308; font-size: 11px; }
+
+  #executionBanner {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 4px 16px;
+    background: rgba(234,179,8,.1);
+    border-bottom: 1px solid rgba(234,179,8,.2);
+    color: #fde047;
+    font: 12px var(--mono);
+  }
+  #pausedReason {
+    font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+    padding: 2px 6px; border-radius: 4px; background: rgba(234,179,8,.2);
+  }
+
   #source {
-    flex: 2;
-    overflow: auto;
-    font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-    font-size: 12px;
-    line-height: 1.5;
-    padding: 0.5rem 0;
+    flex: 1; overflow: auto;
+    font: 12px/1.6 var(--mono);
+    padding: 8px 0;
   }
-  #source div { display: flex; white-space: pre; }
-  #source .line-no {
-    display: inline-block;
-    width: 3.5rem;
-    text-align: right;
-    padding-right: 1rem;
-    color: var(--text-muted);
-    user-select: none;
-    cursor: pointer;
+  #source .empty, .placeholder { color: var(--text-muted); font-style: italic; text-align: center; padding: 2rem 1rem; }
+  #source .row { display: flex; align-items: center; min-height: 1.5rem; min-width: max-content; white-space: pre; border-left: 2px solid transparent; }
+  #source .row:hover { background: rgba(255,255,255,.03); }
+  #source .row.current { background: var(--current-line) !important; border-left-color: var(--current-gutter); }
+  #source .gutter {
+    width: 3.5rem; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: flex-end; gap: 4px;
+    padding-right: .75rem;
+    color: #4b5563; font-size: 11px;
+    cursor: pointer; user-select: none;
   }
-  #source .line-no:hover { color: var(--text-bright); }
-  #source .current { background-color: var(--current-line); border-left: 3px solid var(--accent-yellow); }
-  #source .current .line-no { color: var(--accent-yellow); padding-right: calc(1rem - 3px); }
-  #source .breakpoint .line-no { color: var(--accent-red); font-weight: bold; }
-  #source .breakpoint::before {
-    content: "●";
-    color: var(--accent-red);
-    position: absolute;
-    left: 0.5rem;
-  }
-  #source div { position: relative; }
+  #source .gutter:hover { color: #d1d5db; }
+  #source .row.current .gutter { color: var(--current-gutter); }
+  #source .bp { width: 10px; height: 10px; border-radius: 50%; }
+  #source .row.breakpoint .bp { background: var(--red); box-shadow: 0 0 8px rgba(239,68,68,.6); }
+  #source .code { padding: 0 .75rem; color: rgb(90,220,220); }
 
-  /* Syntax Highlighting */
-  .tok-comment { color: #6a9955; font-style: italic; }
-  .tok-string { color: #ce9178; }
-  .tok-regex { color: #d16969; }
-  .tok-numeric { color: #b5cea8; }
-  .tok-keyword { color: #c586c0; font-weight: 500; }
-  .tok-ident { color: #9cdcfe; }
+  /* same scheme as the terminal REPL / highlight.js and the native GUI (gui/theme.js) */
+  .tok-comment { color: rgb(130,220,130); }
+  .tok-string  { color: rgb(100,220,220); }
+  .tok-regex   { color: rgb(220,120,220); }
+  .tok-numeric { color: rgb(120,200,120); }
+  .tok-keyword, .tok-boolean { color: rgb(240,100,100); }
+  .tok-ident   { color: rgb(235,220,100); }
+  .tok-punct   { color: rgb(90,220,220); }
 
-  /* Variables & Scope */
-  #vars {
-    flex: 1;
-    overflow: auto;
-    padding: 0.5rem 0.8rem;
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 12px;
+  /* Side panel */
+  aside {
+    width: 24rem; flex-shrink: 0;
+    display: flex; flex-direction: column;
+    background: var(--sidebar);
+    border-left: 1px solid var(--border);
   }
-  #vars .scope {
-    font-weight: 600;
-    color: var(--text-bright);
-    margin-top: 0.6rem;
-    margin-bottom: 0.3rem;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.4px;
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: 2px;
+  aside section { height: 50%; display: flex; flex-direction: column; min-height: 0; }
+  aside section + section { border-top: 1px solid var(--border); }
+  .panel-head {
+    height: 36px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border);
   }
-  #vars .variable-row {
-    padding: 0.15rem 0;
-    display: flex;
-    justify-content: space-between;
+  .panel-head h2 {
+    font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #9ca3af;
   }
-  #vars .var-name { color: #9cdcfe; }
-  #vars .var-value { color: #ce9178; }
+  #varFilter {
+    width: 9rem;
+    background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+    padding: 2px 8px; font: 12px inherit; color: #e5e7eb; outline: none;
+  }
+  #varFilter:focus, #varFilter:focus-visible { border-color: var(--accent); }
 
-  /* Terminal / Output */
-  #outputContainer {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    border-top: 1px solid var(--border-color);
-    min-height: 120px;
+  #vars { flex: 1; overflow-y: auto; padding: 8px; font: 12px var(--mono); display: flex; flex-direction: column; gap: 12px; }
+  .scope-group { border: 1px solid var(--border); border-radius: 4px; background: rgba(31,31,35,.5); overflow: hidden; }
+  .scope-group .scope {
+    padding: 6px 10px; background: var(--card);
+    font-size: 11px; font-weight: 700; color: #d1d5db;
   }
-  #output {
-    flex: 1;
-    background-color: #141414;
-    color: #d4d4d4;
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 11.5px;
-    white-space: pre-wrap;
-    padding: 0.6rem;
-    overflow: auto;
-    line-height: 1.4;
-  }
-  #output .stderr { color: var(--accent-red); }
+  .scope-group .vars { padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+  .variable-row { display: flex; justify-content: space-between; gap: 12px; padding: 2px 4px; border-radius: 4px; }
+  .variable-row:hover { background: var(--hover); }
+  .var-name { color: #93c5fd; font-weight: 600; }
+  .var-name::after { content: ":"; }
+  .var-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+  .val-string { color: #ce9178; }
+  .val-number { color: #b5cea8; }
+  .val-boolean { color: #569cd6; }
+  .val-null { color: #569cd6; font-style: italic; }
+  .val-object { color: #4ec9b0; }
 
-  /* Evaluate Console */
-  #evalPane {
-    background-color: var(--bg-surface);
-    border-top: 1px solid var(--border-color);
-    padding: 0.6rem 0.8rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
+  /* Console / REPL */
+  #tabs { display: flex; gap: 4px; height: 100%; }
+  #tabs button { padding: 0 12px; font-size: 12px; font-weight: 500; color: #9ca3af; border-bottom: 2px solid transparent; }
+  #tabs button:hover { color: #e5e7eb; }
+  #tabs button.active { color: #e5e7eb; border-bottom-color: var(--accent); }
+  #btnClear { padding: 4px 6px; border-radius: 4px; color: #9ca3af; font-size: 12px; }
+  #btnClear:hover { background: var(--hover); color: #e5e7eb; }
+  #consoleHead { padding: 0 8px; }
+
+  .view { flex: 1; display: flex; flex-direction: column; min-height: 0; background: #0c0c0e; }
+  #output, #replLog {
+    flex: 1; overflow-y: auto; padding: 12px;
+    font: 12px/1.6 var(--mono);
+    white-space: pre-wrap; word-break: break-all;
   }
-  .eval-row {
-    display: flex;
-    gap: 0.4rem;
+  #output .stderr { color: var(--rose); }
+  #output .stdout { color: #d1d5db; }
+  .log-in { color: var(--blue); font-weight: 600; }
+  .log-out { color: var(--emerald); padding-left: 12px; border-left: 1px solid rgba(16,185,129,.3); margin: 2px 0 6px; }
+  .log-err { color: var(--rose); padding-left: 12px; border-left: 1px solid rgba(244,63,94,.3); margin: 2px 0 6px; }
+
+  #replPrompt {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px;
+    background: var(--card);
+    border-top: 1px solid var(--border);
   }
+  #replPrompt b { color: var(--blue); font: 700 12px var(--mono); }
   #evalInput {
-    flex: 1;
-    background-color: var(--bg-base);
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    padding: 0.35rem 0.5rem;
-    color: var(--text-bright);
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 12px;
-    outline: none;
+    flex: 1; background: transparent; border: 0; outline: none;
+    font: 12px var(--mono); color: var(--text-bright);
   }
-  #evalInput:focus { border-color: var(--accent-blue); }
-  #evalRun { background-color: var(--accent-blue); border-color: var(--accent-blue); color: #fff; }
-  #evalRun:hover { background-color: var(--accent-blue-hover); }
-  #evalResult {
-    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-    font-size: 11.5px;
-    color: var(--accent-green);
-    min-height: 1.2em;
-    word-break: break-all;
+  #evalInput::placeholder, #varFilter::placeholder { color: var(--text-muted); }
+  #evalRun {
+    padding: 4px 10px; border-radius: 4px;
+    background: #2563eb; color: #fff;
+    font: 500 12px var(--mono);
+    transition: background .15s;
   }
+  #evalRun:hover { background: var(--accent); }
+
+  @media (max-width: 900px) { .target, #toolbar span { display: none; } aside { width: 18rem; } }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>qjs-lws Debugger IDE</h1>
-  <div id="status">Connecting…</div>
+  <div class="brand">
+    <div class="logo">qjs-lws <em>Debugger</em></div>
+    <div class="sep"></div>
+    <div id="statusBadge" class="connecting"><span class="dot"></span><span id="status">Connecting…</span></div>
+  </div>
+
+  <div id="toolbar">
+    <button id="continue" title="Continue (F5)"><i>▶</i><span>Continue</span><kbd>F5</kbd></button>
+    <button id="pause" title="Pause (F9)"><i>⏸</i><span>Pause</span><kbd>F9</kbd></button>
+    <div class="sep"></div>
+    <button id="next" title="Step Over (F10)"><i>⤼</i><span>Over</span><kbd>F10</kbd></button>
+    <button id="stepIn" title="Step Into (F11)"><i>↴</i><span>Into</span><kbd>F11</kbd></button>
+    <button id="stepOut" title="Step Out (F12)"><i>↰</i><span>Out</span><kbd>F12</kbd></button>
+  </div>
+
+  <div class="target">ws://<span id="hostLabel">localhost</span>/debug</div>
 </header>
 
-<div id="toolbar">
-  <button id="continue" title="F5">Continue</button>
-  <button id="next" title="F10">Step Over</button>
-  <button id="stepIn" title="F11">Step In</button>
-  <button id="stepOut" title="F12">Step Out</button>
-  <button id="pause" title="F9">Pause</button>
-</div>
-
-<div id="panes">
-  <div class="pane-column" id="sourceCol">
-    <div class="pane-header">Source Inspector</div>
-    <div id="source">(waiting for a paused debug target…)</div>
-    
-    <div id="outputContainer">
-      <div class="pane-header">Console Output</div>
-      <div id="output"></div>
+<main>
+  <div id="editor">
+    <div id="fileTabs"><div id="tabActive"><span id="activeFilename">—</span></div></div>
+    <div id="executionBanner" class="hidden">
+      <span>Paused at <strong id="pausedLocation"></strong></span>
+      <span id="pausedReason">breakpoint</span>
     </div>
+    <div id="source"><div class="empty">Waiting for a paused debug target…</div></div>
   </div>
 
-  <div class="pane-column" id="varsCol">
-    <div class="pane-header">Scope & Variables</div>
-    <div id="vars"></div>
-    
-    <div id="evalPane">
-      <div class="pane-header" style="padding: 0 0 0.3rem 0; background: transparent; border: none;">Evaluate Expression</div>
-      <div class="eval-row">
-        <input id="evalInput" placeholder="expression, Enter to run">
-        <button id="evalRun">Run</button>
+  <aside>
+    <section>
+      <div class="panel-head">
+        <h2>Variables &amp; Scopes</h2>
+        <input id="varFilter" type="text" placeholder="Filter variables…">
       </div>
-      <div id="evalResult"></div>
-    </div>
-  </div>
-</div>
+      <div id="vars"><div class="placeholder">No active frame</div></div>
+    </section>
+
+    <section>
+      <div class="panel-head" id="consoleHead">
+        <div id="tabs">
+          <button id="tabConsole" class="active">Console Stream</button>
+          <button id="tabRepl">Evaluate REPL</button>
+        </div>
+        <button id="btnClear" title="Clear console">Clear</button>
+      </div>
+      <div id="consoleView" class="view">
+        <div id="output"></div>
+      </div>
+      <div id="replView" class="view hidden">
+        <div id="replLog"></div>
+        <div id="replPrompt">
+          <b>&gt;</b>
+          <input id="evalInput" type="text" placeholder="Evaluate expression (Enter)…">
+          <button id="evalRun">Run</button>
+        </div>
+      </div>
+    </section>
+  </aside>
+</main>
 
 <script src="demo.js"></script>
 </body>

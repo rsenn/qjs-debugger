@@ -15,7 +15,7 @@
  */
 import { spawn as spawnProcess } from 'child_process';
 import { readFileSync } from 'fs';
-import { getpid, open as osOpen, O_RDONLY, read as osRead, setReadHandler, setTimeout as osSetTimeout, signal as osSignal, SIGUSR1 } from 'os';
+import { getcwd, getpid, open as osOpen, O_RDONLY, read as osRead, setReadHandler, setTimeout as osSetTimeout, signal as osSignal, SIGUSR1 } from 'os';
 import { basename, dirname, join } from 'path';
 import { REPL } from 'repl';
 import { exit, getenv, open as fopen, out as stdout, puts } from 'std';
@@ -296,7 +296,10 @@ async function StartServer(dbg, { port = 8998 } = {}) {
      examples/debugger/server.js. */
   function serveSource(wsi) {
     const m = (wsi.headers?.['uri-args'] ?? '').match(/(?:^|&)path=([^&]*)/);
-    const path = m ? decodeURIComponent(m[1]) : null;
+    let path = m ? decodeURIComponent(m[1]) : null;
+
+    /* frame filenames are relative to the debuggee's working directory */
+    if(path && !path.startsWith('/')) path = join(dbg.cwd ?? getcwd()[0], path);
 
     if(!path || !path.endsWith('.js')) {
       wsi.respond(400, { 'content-type': 'text/plain' });
